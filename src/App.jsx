@@ -1,5 +1,7 @@
-import React, { useState } from "react";
+import React, { useCallback, useState } from "react";
 import { computeWinding } from "./domain/winding.js";
+import { computeSpectrum } from "./domain/spectrum.js";
+import SpectrumPanel from "./components/SpectrumPanel.jsx";
 import {
   SlotStar,
   PhaseStar,
@@ -177,7 +179,7 @@ function exportDiagram(result, onStatus) {
     document.querySelectorAll("[data-export-diagrams] svg.diagram-svg"),
   );
   if (!svgs.length) {
-    onStatus("Bitte zuerst die Analyse oder das Wickelschema öffnen.");
+    onStatus("Bitte zuerst Analyse, Wickelschema oder Spektrum öffnen.");
     return;
   }
   let y = 80;
@@ -198,7 +200,27 @@ function exportDiagram(result, onStatus) {
       return new XMLSerializer().serializeToString(node);
     })
     .join("");
-  const documentSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="${y + 30}" viewBox="0 0 1200 ${y + 30}"><rect width="100%" height="100%" fill="#fff"/><text x="35" y="38" fill="#24312b" font-size="22" font-family="sans-serif">Wicklungsatelier · Q=${result.slots}, p=${result.polePairs}, ${result.layers} Lage(n), y=${result.coilSpan}</text><text x="35" y="61" fill="#66736c" font-size="13" font-family="sans-serif">Idealisierter dreiphasiger Wicklungsentwurf · kw1=${Number(result.metrics.kw).toFixed(5)}</text>${content}</svg>`;
+  const escapeXml = (value) =>
+    String(value).replace(
+      /[&<>"']/g,
+      (c) =>
+        ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&apos;",
+        })[c],
+    );
+  const heading =
+    svgs.length === 1 && svgs[0].dataset.exportTitle
+      ? `Wicklungsatelier · ${svgs[0].dataset.exportTitle}`
+      : `Wicklungsatelier · Q=${result.slots}, p=${result.polePairs}, ${result.layers} Lage(n), y=${result.coilSpan}`;
+  const caption =
+    svgs.length === 1 && svgs[0].dataset.exportSubtitle
+      ? svgs[0].dataset.exportSubtitle
+      : `Idealisierter dreiphasiger Wicklungsentwurf · kw1=${Number(result.metrics.kw).toFixed(5)}`;
+  const documentSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="${y + 30}" viewBox="0 0 1200 ${y + 30}"><rect width="100%" height="100%" fill="#fff"/><text x="35" y="38" fill="#24312b" font-size="22" font-family="sans-serif">${escapeXml(heading)}</text><text x="35" y="61" fill="#66736c" font-size="13" font-family="sans-serif">${escapeXml(caption)}</text>${content}</svg>`;
   saveFile(
     `wicklungsdiagramme-Q${result.slots}-p${result.polePairs}.svg`,
     documentSvg,
@@ -430,6 +452,13 @@ export default function App() {
   const [selectedSlot, setSelectedSlot] = useState(null);
   const [selectedPhase, setSelectedPhase] = useState(null);
   const [connectionMode, setConnectionMode] = useState("series");
+  const [spectrumExport, setSpectrumExport] = useState(null);
+  const handleSpectrumChange = useCallback(
+    (data) => {
+      setSpectrumExport({ winding: result, data });
+    },
+    [result],
+  );
   const [status, setStatus] = useState("");
   const [exportOpen, setExportOpen] = useState(false);
   const changed =
@@ -715,8 +744,8 @@ export default function App() {
             <div className="sidebar-note">
               <Icon name="info" size={17} />
               <p>
-                Von den Vorlesungsfolien zum interaktiven Modell. Alle Winkel
-                sind <b>elektrische Winkel</b>.
+                Von den Vorlesungsfolien zum interaktiven Modell. Sterne:
+                <b> elektrische Winkel</b>. Spektrum: mechanische Raumordnung.
               </p>
             </div>
           </aside>
@@ -727,6 +756,7 @@ export default function App() {
                 {[
                   { id: "analyse", label: "Analyse" },
                   { id: "wicklung", label: "Wickelschema" },
+                  { id: "spektrum", label: "Spektrum" },
                   { id: "methode", label: "Berechnungsweg" },
                 ].map((tab) => (
                   <button
@@ -783,7 +813,17 @@ export default function App() {
                         onClick={() => {
                           saveFile(
                             `wicklung-Q${result.slots}-p${result.polePairs}.json`,
-                            JSON.stringify(result, null, 2),
+                            JSON.stringify(
+                              {
+                                ...result,
+                                spectrum:
+                                  spectrumExport?.winding === result
+                                    ? spectrumExport.data
+                                    : computeSpectrum(result),
+                              },
+                              null,
+                              2,
+                            ),
                             "application/json",
                           );
                           setExportOpen(false);
@@ -1204,12 +1244,66 @@ export default function App() {
                     <p className="panel-note">
                       Ein großer Grundwellenfaktor ist erwünscht. Die Wirkung
                       höherer Raumharmonischer hängt auch von Erregung,
-                      Verschaltung und Maschinengeometrie ab.
+                      Verschaltung und Maschinengeometrie ab. Diese Faktoren
+                      enthalten noch keinen 1/k-Faktor.
+                      <button
+                        className="spectrum-link"
+                        onClick={() => setActiveTab("spektrum")}
+                      >
+                        Zum Fourier-Spektrum <Icon name="arrow" size={14} />
+                      </button>
                     </p>
                   </article>
                 </>
               )}
-              {activeTab === "methode" && <Method result={result} />}
+              {activeTab === "spektrum" && (
+                <SpectrumPanel
+                  result={result}
+                  onDataChange={handleSpectrumChange}
+                />
+              )}
+              {activeTab === "methode" && (
+                <>
+                  <Method result={result} />
+                  <article className="panel spectrum-method-note">
+                    <StepTitle
+                      number="05"
+                      title="Vom Wicklungsfaktor zum Raumspektrum"
+                      subtitle="Fourier-Koeffizienten der idealisierten Wicklungsfunktion"
+                    />
+                    <div>
+                      <p>
+                        Für die mechanische Nutlage φₙ = 2π(n − 1)/Q wird zuerst
+                        Dₖ = Σ sₙ · exp(−j k φₙ) berechnet. Der
+                        Fourier-Koeffizient lautet Cₖ = Dₖ/(2 j k). Für eine
+                        mittlere Spule wird zusätzlich durch die Spulenzahl des
+                        Strangs geteilt.
+                      </p>
+                      <p>
+                        Die Grundwelle liegt bei k = p. Ihr Betrag ist Nₛ · k
+                        <sub>w1</sub>/p für die Strangsumme und k<sub>w1</sub>/p
+                        je Spule. Ein einziger fester mechanischer Bezugswinkel
+                        richtet die Grundwelle positiv reell aus; dieselbe
+                        Winkelverschiebung gilt für alle Ordnungen. Re(Cₖ) kann
+                        negativ sein, |Cₖ| ist immer nichtnegativ.
+                      </p>
+                      <p>
+                        Die Darstellung beschreibt die räumliche
+                        Wicklungsfunktion mit idealisierten Linienleitern.
+                        Magnetische Flussdichten, Stromharmonische und
+                        Feld-Drehrichtungen folgen daraus ohne Erregungs- und
+                        Maschinenmodell noch nicht.
+                      </p>
+                      <button
+                        className="spectrum-link"
+                        onClick={() => setActiveTab("spektrum")}
+                      >
+                        Spektrum öffnen <Icon name="arrow" size={14} />
+                      </button>
+                    </div>
+                  </article>
+                </>
+              )}
             </div>
             <div className="results-bottom">
               <span>
@@ -1240,7 +1334,7 @@ export default function App() {
             Wicklungsatelier<span className="footer-divider">/</span>Verstehen.
             Berechnen. Entwickeln.
           </span>
-          <span>Dreiphasige Statorwicklungen · Entwurfsmodell v0.1</span>
+          <span>Dreiphasige Statorwicklungen · Entwurfsmodell v0.2</span>
         </footer>
       </main>
     </>

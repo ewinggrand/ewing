@@ -47,8 +47,39 @@ Die Cloud-Einrichtungsansicht stellt keine automatisch erreichbare Webvorschau b
 3. Im Nutenspannungsstern oder Zonenplan eine Nut auswählen. Die Auswahl hebt die zugehörigen Leiter im Wickelschema hervor. Die Stränge A, B und C sind einzeln filterbar.
 4. In **Wickelschema** zwischen einzelnen Spulen und additiver Serienverschaltung mit U1/U2, V1/V2 und W1/W2 wechseln. Jede Klemme gehört zu einem Ende des jeweiligen Strangs; Stern-/Dreieckbrücken sind nicht enthalten.
 5. **Berechnungsweg** erklärt Formeln, Vorzeichen, Bewertungsmaßstab und Grenzen. **Exportieren** bietet Nutbelegung und Spulen als CSV, sichtbare Diagramme als SVG und die vollständige Berechnung als JSON.
+6. **Spektrum** zeigt die räumlichen Fourier-Koeffizienten der aktuellen Wicklung oder vier analytische Vergleichskurven. Strang, Normierung, höchste Ordnung, Realteil/Betrag und Strangpolung lassen sich auswählen. Eine Spektrallinie anklicken, um ihre Werte zu sehen; Spektrums-CSV sowie SVG und JSON stehen als Export bereit.
 
 Die blauen Rechtecke stellen **Zähne** dar. Alle aktiven Spulenseiten liegen in den **weißen Nuten zwischen den Zähnen**. Große Wickelschemata können innerhalb ihrer Karte horizontal gescrollt werden. Die SVGs bleiben unabhängig von der Bildschirmauflösung skalierbar.
+
+## Raumspektrum der Wicklung
+
+Die bisherigen Wicklungsfaktoren sind Beträge geometrischer Zeigersummen. Das neue Spektrum enthält zusätzlich die Integration zur räumlichen Wicklungsfunktion und damit den **Faktor 1/k**. Es wird aus den tatsächlich vorhandenen, vorzeichenbehafteten Spulenseiten beider Lagen berechnet:
+
+```text
+φn = 2π(n−1)/Q                 mechanische Nutlage
+Dk = Σ sn · exp(−j k φn)       mechanische Raumordnung k ≥ 1
+Ck = Dk / (2 j k)             Strangsumme
+Ck,Spule = Ck / Nc            mittlere Spule; Nc = Spulenzahl des Strangs
+```
+
+Die Skalierung entspricht π mal dem komplexen Fourier-Koeffizienten einer Wicklungsfunktion mit Einheitssprüngen an den Leitern. Dadurch hat eine vollgeteilte Einzelspule die Referenz **sin(kπ/2)/k**. Ohne gültiges Wickelschema wird keine Kurve berechnet.
+
+**k ist mechanisch**, im Unterschied zur bisherigen elektrischen Ordnung ν. Die Nutzgrundwelle der berechneten Wicklung liegt bei **k=p**, und ν=k/p. Insbesondere liegt sie bei Q9/p4 an k4. Ihr Betrag ist bei der Strangsumme **Nc·kw1/p** und je Spule **kw1/p**. Eine Grundwelle oberhalb des gewählten Plotbereichs wird weiterhin berechnet und als außerhalb des Bereichs gekennzeichnet.
+
+Für die aktuelle Wicklung wird ein einziger mechanischer Bezugswinkel **φ0=arg(Cp)/p** festgelegt. Alle Ordnungen werden mit **exp(−jkφ0)** gedreht; die Nutzgrundwelle ist dann positiv reell. **Re(Ck)** ist der vorzeichenbehaftete Realteil, **|Ck|** der davon getrennte Amplitudenbetrag. Der Imaginärteil bleibt in Detailkarte, Tabelle und Export erhalten. Eine Umkehr der Strangpolung multipliziert alle komplexen Koeffizienten gemeinsam mit −1. Negative Realteile bedeuten keine negativen Frequenzen und beweisen keinen Feld-Drehsinn.
+
+### Vergleich mit den bereitgestellten Spektrumsfolien
+
+| Referenz                 | Ausgewertete Formel                                                 |
+| ------------------------ | ------------------------------------------------------------------- |
+| Vollgeteilte Einzelspule | sin(kπ/2)/k                                                         |
+| 3/2-Wicklung             | sin(kπ/3)/k; „3/2“ ist der Name, kein zusätzlicher Amplitudenfaktor |
+| Gesehnte Spulengruppe    | [2 cos(kπ/2) sin(2πk/9) − sin(kπ/6)]/k                              |
+| 9-Nuten-Spulengruppe, p4 | sin(kπ/9)[−1 + 2 cos(2πk/9)]/k                                      |
+
+Die Formeln werden unverändert ausgewertet. Die gesehnte Referenz besitzt gegenüber dem gezeichneten Beispiel eine gemeinsame Vorzeichenumkehr, die sich mit der Polungsumschaltung nachvollziehen lässt. Beim 9-Nuten-Beispiel reproduziert ein Gruppenabstand von **2π/9** die angegebenen Beträge; die Lesart des kleinen Gruppenexponenten in der Abbildung ist nicht eindeutig. Einzelne positive Folienbalken stimmen nicht mit den vorzeichenbehafteten Formelwerten überein. Dieser Unterschied wird angezeigt; es werden keine einzelnen Vorzeichen angepasst, um einen Plot nachzuzeichnen.
+
+Die analytischen Referenzen erhalten keine erfundene Polpaarzahl. Wo eine Nutzgrundwelle nicht festgelegt ist, wird ein ausdrücklich benannter Bezugskoeffizient angezeigt. Das Spektrum beschreibt idealisierte Linienleiter und gleiche Windungszahlen; Stromspektren, Flussdichten und mit-/gegenläufige Drehfelder erfordern zusätzliche Maschinen- und Erregungsdaten.
 
 ## Mathematisches Modell
 
@@ -92,10 +123,13 @@ Die Tests prüfen bekannte Referenzwerte, die vollständige und eindeutige Seite
 
 ```text
 src/domain/winding.js       Rechenmodell ohne UI-Abhängigkeiten
+src/domain/spectrum.js      Räumliche Fourier-Koeffizienten und Referenzformeln
 src/components/Diagrams.jsx SVG-Sterne, Zonenplan und Wickelschema
+src/components/SpectrumPanel.jsx Interaktiver Spektrumsplot und Koeffizienten
 src/App.jsx                Eingaben, Ergebnisse, Erklärungen und Export
 src/styles.css             Responsive Oberfläche
 tests/winding.test.js       Numerische Referenzen und Modellinvarianten
+tests/spectrum.test.js      Fourier-Referenzen, Normierung und Phasenursprung
 ```
 
 Jede Cloud-Aufgabe läuft bereits in einer isolierten Umgebung. Für weitere Arbeit den vorhandenen Checkout verwenden; ein zusätzlicher Git-Worktree ist nicht nötig.

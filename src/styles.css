@@ -1970,3 +1970,81 @@ tbody tr:hover {
     margin-top: 10px;
   }
 }
+
+.spectrum-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 9px 0 0 9px;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: #a56540;
+  padding: 0;
+  cursor: pointer;
+}
+.spectrum-link:hover {
+  color: #7f3a25;
+}
+.spectrum-method-note {
+  margin-top: 18px;
+}
+.spectrum-method-note > div:last-child {
+  padding: 15px 22px 24px;
+}
+.spectrum-method-note > div:last-child > p {
+  font-size: 11px;
+  color: #7f8c72;
+  line-height: 1.9;
+}
+.spectrum-method-note p + p {
+  margin-top: 12px;
+}
+.spectrum-method-note .spectrum-link {
+  font-size: 11px;
+  margin-left: 0;
+}
+.tabs {
+  gap: 21px;
+}
+@media (max-width: 1150px) {
+  .tabs {
+    gap: 16px;
+  }
+}
+@media (max-width: 900px) {
+  .tabs {
+    gap: 12px;
+  }
+  .tabs button {
+    font-size: 9px;
+  }
+}
+@media (max-width: 640px) {
+  .tabs {
+    gap: 14px;
+  }
+  .tabs button {
+    font-size: 9px;
+  }
+  .results-toolbar {
+    gap: 8px;
+  }
+  .spectrum-method-note > div:last-child {
+    padding: 14px 17px 21px;
+  }
+  .spectrum-method-note > div:last-child > p {
+    font-size: 10px;
+  }
+}
+@media (max-width: 370px) {
+  .tabs {
+    gap: 10px;
+  }
+  .tabs button {
+    font-size: 8px;
+  }
+  .export-button {
+    padding: 6px;
+  }
+}
