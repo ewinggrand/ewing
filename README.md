@@ -45,11 +45,31 @@ Die Cloud-Einrichtungsansicht stellt keine automatisch erreichbare Webvorschau b
 1. Q (6–120), p (1 bis Q/2), Ein-/Zweischicht und automatische oder feste Spulenweite wählen.
 2. **Wicklung berechnen** anklicken. Die Ergebnisse bleiben bis zur nächsten Berechnung erhalten; geänderte Parameter sind gekennzeichnet.
 3. Im Nutenspannungsstern oder Zonenplan eine Nut auswählen. Die Auswahl hebt die zugehörigen Leiter im Wickelschema hervor. Die Stränge A, B und C sind einzeln filterbar.
-4. In **Wickelschema** zwischen einzelnen Spulen und additiver Serienverschaltung mit U1/U2, V1/V2 und W1/W2 wechseln. Jede Klemme gehört zu einem Ende des jeweiligen Strangs; Stern-/Dreieckbrücken sind nicht enthalten.
+4. In **Wickelschema** zwischen offenen Einzelspulen und additiver Serienverschaltung mit U1/U2, V1/V2 und W1/W2 wechseln. Die automatische Abwicklung hält Spulengruppen möglichst zusammen. Über **Abwicklung beginnen bei** lässt sich ausschließlich der angezeigte Umfangsschnitt drehen; die Serienfolge und die Klemmen bleiben gleich. Stern-/Dreieckbrücken sind nicht enthalten.
 5. **Berechnungsweg** erklärt Formeln, Vorzeichen, Bewertungsmaßstab und Grenzen. **Exportieren** bietet Nutbelegung und Spulen als CSV, sichtbare Diagramme als SVG und die vollständige Berechnung als JSON.
 6. **Spektrum** zeigt die räumlichen Fourier-Koeffizienten der aktuellen Wicklung oder vier analytische Vergleichskurven. Strang, Normierung, höchste Ordnung, Realteil/Betrag und Strangpolung lassen sich auswählen. Eine Spektrallinie anklicken, um ihre Werte zu sehen; Spektrums-CSV sowie SVG und JSON stehen als Export bereit.
 
 Die blauen Rechtecke stellen **Zähne** dar. Alle aktiven Spulenseiten liegen in den **weißen Nuten zwischen den Zähnen**. Große Wickelschemata können innerhalb ihrer Karte horizontal gescrollt werden. Die SVGs bleiben unabhängig von der Bildschirmauflösung skalierbar.
+
+### Wickelschema und Spulengruppen
+
+Die Zeichnung wird aus denselben tatsächlichen Spulenseiten und Spulenverbindungen aufgebaut wie Spannungssterne und Spektrum. Die Köpfe haben eine gemeinsame Steigung; ihre Höhe folgt der mechanischen Spulenweite. Der untere V-Kopf jeder Spule besitzt zwei getrennte offene Enden. Eine geschlossene, kurzgeschlossene Einzelwindung wird nicht gezeichnet.
+
+Im Serienmodus verbindet jede Brücke das negative Ende einer Spule mit dem positiven Anfang der nächsten Spule desselben Strangs. Der kanonische Serienpfad wird einmal aus der automatischen Gruppenanordnung bestimmt und bleibt bei manueller Drehung der Abwicklung identisch. Brücken verwenden getrennte Höhen, wenn ihre horizontalen Abschnitte überlappen; voneinander getrennte Gruppen können die kleinen lokalen Höhen wiederverwenden. Helle Unterlegungen trennen Kreuzungen optisch. Offene Klemmen liegen in der Nähe der zugehörigen Gruppe.
+
+Für **Q9, p4, Zweischicht, y1** beginnt die automatische Abwicklung in **Nut9** und zeigt neun vollständige Zahnspulen:
+
+| Strang | Additive Serienfolge   | Anfang      | Ende        |
+| ------ | ---------------------- | ----------- | ----------- |
+| A      | U1 → A9 → A1 → A2 → U2 | Nut1, Lage2 | Nut2, Lage1 |
+| B      | V1 → B3 → B4 → B5 → V2 | Nut4, Lage2 | Nut5, Lage1 |
+| C      | W1 → C6 → C7 → C8 → W2 | Nut7, Lage2 | Nut8, Lage1 |
+
+Die Nutfolge lautet **9,1,2,3,4,5,6,7,8,9**. Die beiden Randachsen stellen dieselbe Nut am Umfangsschnitt dar: Nut9/Lage1 erscheint links, Nut9/Lage2 rechts. Insgesamt werden genau **18 aktive Seiten** gezeichnet, jede genau einmal. Lage1 liegt zur Lesbarkeit rechts, Lage2 links innerhalb einer Nut; dies ist eine seitliche grafische Auffächerung, keine Änderung der tatsächlichen Schichtung.
+
+Die Pfeile zeigen die positive Richtung der benannten Stranganschlüsse. Die beigefügte Zahnspulen-Vorlage zeigt gegenüber dieser Zuordnung eine gemeinsame Umkehr der Anschlussrichtung. Durch Vertauschen der beiden Anschlüsse jedes Strangs kehren sich alle betreffenden Pfeile und Spannungen um. Die Zeichnung passt keine einzelnen Spulenzeichen an eine Vorlage an.
+
+Die Polteilung **τp=Q/(2p)** ist mit ihrer tatsächlichen mechanischen Länge im Nutraster markiert. Gesplittete Spulenköpfe und Serienbrücken werden am Umfangsschnitt in korrekter Höhe fortgesetzt. Zahn- und Nutnummern bezeichnen unterschiedliche Objekte; die obere Zonenleiste zeigt ausdrücklich die Belegung der ersten Lage. Unter der Zeichnung stehen die tatsächlichen Serienketten. CSV enthält zusätzlich Verbindungen und Klemmen; JSON enthält das vollständige Layout mit Topologie und Schnittposition. Ein SVG-Export hält die gewählte Abwicklung und die Polteilung fest.
 
 ## Raumspektrum der Wicklung
 
@@ -97,7 +117,7 @@ Die analytischen Referenzen erhalten keine erfundene Polpaarzahl. Wo eine Nutzgr
 
 Der geprüfte Kandidatenraum umfasst **gleichweite Spulen mit y = 1 bis ceil(Q/(2p))**, begrenzt auf höchstens Q/2, bei fester Zonung. Unter den vollständigen und symmetrischen Kandidaten gewinnt der höchste Grundwellen-Wicklungsfaktor, bei Gleichstand die kürzere Weite. In Einschicht ändert die Paarung bei fester Zonung den Strangstern nicht; dort verkürzt die Automatik die Weite.
 
-Das ist **kein allgemeines elektromagnetisches Optimum**. Andere Zonungen, gemischte Weiten, Parallelzweige, Nutgeometrie, Drahtquerschnitt, thermische Grenzen, Wickelkopfkreuzungen und eine gemeinsame Bewertung von Oberwellen oder Verlusten werden nicht optimiert. Eine im Modell ungültige Kombination ist nicht generell physikalisch ausgeschlossen. Die Serienverbindungen folgen der deterministischen Spulenliste und werden nicht geometrisch optimiert.
+Das ist **kein allgemeines elektromagnetisches Optimum**. Andere Zonungen, gemischte Weiten, Parallelzweige, Nutgeometrie, Drahtquerschnitt, thermische Grenzen, Wickelkopfkreuzungen und eine gemeinsame Bewertung von Oberwellen oder Verlusten werden nicht optimiert. Eine im Modell ungültige Kombination ist nicht generell physikalisch ausgeschlossen. Die Serienverbindungen folgen der kanonischen geometrischen Gruppenfolge; ihre zweidimensionale Darstellung ist kein Nachweis eines fertigungsgerechten dreidimensionalen Wickelkopfs.
 
 ### Referenzen
 
@@ -123,12 +143,14 @@ Die Tests prüfen bekannte Referenzwerte, die vollständige und eindeutige Seite
 
 ```text
 src/domain/winding.js       Rechenmodell ohne UI-Abhängigkeiten
+src/domain/windingLayout.js Kanonische Seriennetze und periodische Zeichengeometrie
 src/domain/spectrum.js      Räumliche Fourier-Koeffizienten und Referenzformeln
 src/components/Diagrams.jsx SVG-Sterne, Zonenplan und Wickelschema
 src/components/SpectrumPanel.jsx Interaktiver Spektrumsplot und Koeffizienten
 src/App.jsx                Eingaben, Ergebnisse, Erklärungen und Export
 src/styles.css             Responsive Oberfläche
 tests/winding.test.js       Numerische Referenzen und Modellinvarianten
+tests/winding-layout.test.js Eindeutige Leiterseiten, Seriennetze und Schnittinvarianten
 tests/spectrum.test.js      Fourier-Referenzen, Normierung und Phasenursprung
 ```
 

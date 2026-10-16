@@ -2048,3 +2048,77 @@ tbody tr:hover {
     padding: 6px;
   }
 }
+
+.winding-cut-controls {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 22px 18px;
+  flex-wrap: wrap;
+}
+.winding-cut-controls label {
+  font-size: 10px;
+  font-weight: 500;
+  color: #6d7c60;
+}
+.winding-cut-controls select {
+  font-size: 10px;
+  border: 1px solid #dfe4d4;
+  background: #fcfdf8;
+  border-radius: 4px;
+  color: #506442;
+  padding: 8px 10px;
+  max-width: 100%;
+}
+.winding-cut-controls > span {
+  color: #89947b;
+  font-size: 9px;
+  line-height: 1.7;
+}
+.winding-chains-panel {
+  margin-bottom: 18px;
+}
+.winding-chain-list {
+  padding: 17px 22px 20px;
+  display: grid;
+  gap: 9px;
+}
+.winding-chain {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  font-size: 11px;
+  line-height: 1.9;
+}
+.winding-chain b {
+  color: var(--phase-color);
+  font-weight: 600;
+  flex: 0 0 14px;
+}
+.winding-chain > span {
+  color: #718264;
+  overflow-wrap: anywhere;
+}
+.detail-winding .winding-series svg {
+  max-height: none;
+}
+@media (max-width: 640px) {
+  .winding-cut-controls {
+    padding: 0 17px 18px;
+    gap: 9px;
+  }
+  .winding-cut-controls label,
+  .winding-cut-controls select {
+    font-size: 9px;
+  }
+  .winding-cut-controls > span {
+    font-size: 8px;
+    width: 100%;
+  }
+  .winding-chain-list {
+    padding: 15px 17px 18px;
+  }
+  .winding-chain {
+    font-size: 10px;
+  }
+}

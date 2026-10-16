@@ -71,11 +71,12 @@ console.log(
   `Offline-App erstellt: ${output} (${Math.round(Buffer.byteLength(html) / 1024)} KiB)`,
 );
 
-const instructions = `Wicklungsatelier · Version 0.2
+const instructions = `Wicklungsatelier · Version 0.3
 
 wicklungsatelier.html per Doppelklick im eigenen Browser öffnen.
 Keine Installation und keine Internetverbindung erforderlich.
-Den neuen Reiter Spektrum für Fourier-Koeffizienten und Folienreferenzen öffnen.
+Der Reiter Wickelschema zeigt Spulengruppen, offene Stranganschlüsse und die wählbare Abwicklung.
+Der Reiter Spektrum zeigt Fourier-Koeffizienten und Folienreferenzen.
 
 Q = Nutenzahl, p = Polpaarzahl.
 Die automatische Auswahl optimiert innerhalb des dokumentierten 60-Grad-Zonenmodells.

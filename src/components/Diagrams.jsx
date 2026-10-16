@@ -1,4 +1,5 @@
-import React, { useId } from "react";
+import React, { useEffect, useId, useMemo } from "react";
+import { buildWindingLayout } from "../domain/windingLayout.js";
 
 export const PHASE_COLORS = { A: "#c65736", B: "#31806d", C: "#5668c9" };
 const INK = "#29372f";
@@ -609,67 +610,164 @@ export function WindingDiagram({
   selectedSlot,
   onSelectSlot,
   connectionMode = "individual",
+  startSlot = "auto",
+  onLayoutChange,
 }) {
   const id = useDiagramId("winding");
-  const assignments = getSlots(result);
-  const coils = result.coils || [];
-  const layerCount = Math.max(1, result.layers || 1);
-  const step = result.slots <= 24 ? 47 : 35;
-  const left = 43;
-  const width = Math.max(680, left * 2 + (result.slots - 1) * step);
-  const actualStep = (width - 36) / Math.max(1, result.slots);
-  const firstSlotX = 18 + actualStep / 2;
-  const slotGap = layerCount === 2 ? 17 : 14;
-  const yTop = 112;
-  const yBottom = 237;
+  const layout = useMemo(() => {
+    try {
+      return buildWindingLayout(result, { connectionMode, startSlot });
+    } catch (error) {
+      return { valid: false, warnings: [error.message] };
+    }
+  }, [result, connectionMode, startSlot]);
+  useEffect(() => {
+    onLayoutChange?.(layout);
+  }, [layout, onLayoutChange]);
+  const geometry = layout.geometry || {};
+  const width = layout.width || 740;
+  const height = Math.max(layout.height || 380, (geometry.legendY || 330) + 46);
+  const bodyTop = layout.bodyTop ?? geometry.bodyTop ?? 120;
+  const bodyBottom = layout.bodyBottom ?? geometry.bodyBottom ?? 240;
+  const slots = layout.slots || [];
+  const coilPaths = layout.coilPaths || [];
+  const groups = layout.groups || [];
+  const connections = layout.connections || [];
+  const terminals = layout.terminals || [];
+  const pitch = layout.slotPitch || geometry.slotPitch || 58;
+  const seamLeft = geometry.seamLeft ?? slots[0]?.x ?? 60;
+  const seamRight =
+    geometry.seamRight ?? slots[slots.length - 1]?.x ?? width - 60;
+  const slotGap = geometry.slotGap || 18;
+  const layerCount = result?.layers || 1;
   const isSeries = connectionMode === "series";
-  const xSlot = (slot, layer = 1) =>
-    firstSlotX +
-    (slot - 1) * actualStep +
-    (layerCount === 2 ? (layer === 2 ? 3.8 : -3.8) : 0);
-  const seamLeft = 18;
-  const seamRight = width - 18;
-  const showCoilLabels = coils.length <= 24;
-  const edgeMarks = [];
-  const connections = [];
-  const terminals = [];
-  for (const [phase, letter] of [
-    ["A", "U"],
-    ["B", "V"],
-    ["C", "W"],
-  ]) {
-    const orderedCoils = coils.filter((coil) => coil.phase === phase);
-    orderedCoils
-      .slice(0, -1)
-      .forEach((coil, index) =>
-        connections.push({ phase, from: coil, to: orderedCoils[index + 1] }),
-      );
-    if (orderedCoils.length) {
-      terminals.push({
-        phase,
-        label: `${letter}1`,
-        coil: orderedCoils[0],
-        slot: orderedCoils[0].positiveSlot,
-        layer: orderedCoils[0].positiveLayer || 1,
-      });
-      const last = orderedCoils[orderedCoils.length - 1];
-      terminals.push({
-        phase,
-        label: `${letter}2`,
-        coil: last,
-        slot: last.negativeSlot,
-        layer: last.negativeLayer || 1,
-      });
+  const dimensionY = geometry.dimensionY ?? 27;
+  const zoneY = geometry.upperZoneLabelY ?? 48;
+  const legendY = geometry.legendY ?? height - 43;
+  const groupLabelY = geometry.groupLabelY ?? legendY - 32;
+  const slotLabelY = geometry.slotLabelY ?? bodyTop - 13;
+  const sideList = slots.flatMap((slot) =>
+    (slot.sides || []).map((side) => ({
+      ...side,
+      slot: side.slot ?? slot.slot,
+    })),
+  );
+  const sideByNode = new Map(sideList.map((side) => [side.nodeId, side]));
+  const pathPoints = (path) => path?.points || [];
+  const pointsAttribute = (points) =>
+    points.map((p) => `${p.x ?? p[0]},${p.y ?? p[1]}`).join(" ");
+  const casingPoints = (path) => {
+    const trimStart = (points) => {
+      let remaining = 4;
+      while (points.length > 1 && remaining > 0) {
+        const a = points[0];
+        const b = points[1];
+        const distance = Math.hypot(b.x - a.x, b.y - a.y);
+        if (distance <= remaining) {
+          remaining -= distance;
+          points.shift();
+        } else {
+          points[0] = {
+            x: a.x + ((b.x - a.x) * remaining) / distance,
+            y: a.y + ((b.y - a.y) * remaining) / distance,
+          };
+          remaining = 0;
+        }
+      }
+      return points;
+    };
+    const points = pathPoints(path).map((p) => ({
+      x: p.x ?? p[0],
+      y: p.y ?? p[1],
+    }));
+    return trimStart(trimStart(points).reverse()).reverse();
+  };
+  const allPaths = (element) =>
+    element.paths?.length
+      ? element.paths
+      : element.points?.length
+        ? [{ points: element.points }]
+        : [];
+  const elementOpacity = (phase, touched = true) =>
+    phaseActive(selectedPhase, phase)
+      ? selectedSlot && !touched
+        ? 0.34
+        : 0.96
+      : 0.12;
+  const touches = (...sides) =>
+    sides.some((side) => side && chosen(selectedSlot, side.slot));
+  const zoneRuns = [];
+  for (const slot of slots) {
+    const assignment = result?.slotAssignments?.find(
+      (side) => side.slot === slot.slot,
+    );
+    if (!assignment) continue;
+    const x1 = Math.max(seamLeft, slot.x - pitch / 2);
+    const x2 = Math.min(seamRight, slot.x + pitch / 2);
+    if (x2 <= x1) continue;
+    const zone = zoneLabel(assignment);
+    const previous = zoneRuns[zoneRuns.length - 1];
+    if (previous && previous.zone === zone && Math.abs(previous.x2 - x1) < 0.1)
+      previous.x2 = x2;
+    else zoneRuns.push({ zone, phase: assignment.phase, x1, x2 });
+  }
+  const dimensions = layout.polePitchDimension || geometry.polePitchDimension;
+  const polePitchWidth = (result?.polePitch || 1) * pitch;
+  const dimensionX1 = dimensions?.x1 ?? seamLeft;
+  const dimensionX2 =
+    dimensions?.x2 ?? Math.min(seamRight, dimensionX1 + polePitchWidth);
+  const polePitchY = dimensions?.y ?? dimensionY;
+  const header = `Wickelschema · Q${result?.slots}/p${result?.polePairs} · ${isSeries ? "Strangverschaltung" : "Einzelspulen"}`;
+  const subtitle = `Schnitt in Nut ${layout.startSlot ?? startSlot} · Polteilung τp = ${fmt(result?.polePitch, 3)} Nuten · ${layerCount} Lage${layerCount === 1 ? "" : "n"}`;
+  const seamMarks = [];
+  for (const coil of coilPaths) {
+    for (const path of [
+      ...(coil.topPaths || []),
+      ...(coil.bottomPaths || []),
+    ]) {
+      const points = pathPoints(path);
+      if (!points.length) continue;
+      for (const p of [points[0], points[points.length - 1]]) {
+        const x = p.x ?? p[0];
+        const y = p.y ?? p[1];
+        if (Math.abs(x - seamLeft) < 0.2 || Math.abs(x - seamRight) < 0.2)
+          seamMarks.push({ x, y, phase: coil.phase, coil: coil.id });
+      }
     }
   }
-  const connectionBase = yBottom + 24;
-  const connectionSpacing = connections.length > 48 ? 7 : 9;
-  const terminalRouteBase =
-    connectionBase +
-    Math.max(0, connections.length - 1) * connectionSpacing +
-    20;
-  const terminalY = terminalRouteBase + terminals.length * 9 + 20;
-  const height = isSeries ? terminalY + 94 : 365;
+  for (const connection of connections) {
+    for (const path of allPaths(connection)) {
+      const points = pathPoints(path);
+      if (!points.length) continue;
+      for (const p of [points[0], points[points.length - 1]]) {
+        const x = p.x ?? p[0];
+        const y = p.y ?? p[1];
+        if (Math.abs(x - seamLeft) < 0.2 || Math.abs(x - seamRight) < 0.2)
+          seamMarks.push({
+            x,
+            y,
+            phase: connection.phase,
+            coil: `${connection.fromCoilId} → ${connection.toCoilId}`,
+            kind: "series",
+          });
+      }
+    }
+  }
+  if (layout.valid === false || !slots.length)
+    return (
+      <div
+        className="diagram-shell winding-diagram"
+        role="status"
+        style={{ padding: 24, fontSize: 12, lineHeight: 1.8, color: MUTED }}
+      >
+        {(layout.warnings?.length
+          ? layout.warnings
+          : ["Für dieses Modell liegt kein vollständiges Wickelschema vor."]
+        ).map((warning) => (
+          <p key={warning}>{warning}</p>
+        ))}
+      </div>
+    );
   return (
     <div
       className={`diagram-shell winding-diagram${isSeries ? " winding-series" : ""}`}
@@ -682,311 +780,515 @@ export function WindingDiagram({
         height={height}
         role="img"
         aria-labelledby={`${id}-title ${id}-desc`}
+        data-export-title={header}
+        data-export-subtitle={subtitle}
+        data-winding-start-slot={layout.startSlot}
+        data-winding-mode={connectionMode}
         style={{
           display: "block",
           width: "100%",
           minWidth: width,
           height: "auto",
-          maxHeight: isSeries ? "none" : undefined,
+          maxHeight: "none",
           fontFamily: "inherit",
         }}
       >
-        <title
-          id={`${id}-title`}
-        >{`Abgewickeltes Wickelschema mit ${result.slots} Nuten und ${coils.length} Spulen${isSeries ? ", je Strang additiv in Reihe verbunden" : ""}`}</title>
-        <desc id={`${id}-desc`}>
-          {isSeries
-            ? "Die blauen Rechtecke sind Zähne. Leiter liegen in den weißen Nuten zwischen den Zähnen. Die Spulen jedes Strangs werden additiv in der Reihenfolge der Spulenliste verbunden: vom positiven Leiter durch den oberen Wickelkopf zum negativen Leiter, dann unten zum positiven Leiter der nächsten Spule. Jede untere Verbindung hat eine eigene Höhe. Kreuzungen ohne Verbindungspunkt sind elektrisch getrennt. U1 und U2, V1 und V2 sowie W1 und W2 sind die offenen Stranganschlüsse. Es werden keine Stern- oder Dreieckbrücken und keine Fertigungs- oder Wickelkopfoptimierung vorgegeben. Randmarkierungen kennzeichnen den Umlauf über das Ende der Abwicklung."
-            : "Die blauen Rechtecke sind Zähne. Leiter liegen in den weißen Nuten zwischen den Zähnen. Jede gezeichnete Schleife ist eine eigene Spule. Randübertritte sind als geteilte Spulen mit Fortsetzungsmarkierungen dargestellt. Eine elektrische Serienverbindung zwischen Spulen wird nicht vorgegeben."}
-        </desc>
-        <Arrows id={id} small />
-        <text x="15" y="18" fill={MUTED} fontSize="10.5">
-          NUT
-        </text>
-        {assignments.map((slot) => (
-          <text
-            key={slot.slot}
-            x={xSlot(slot.slot, 0) + (layerCount === 2 ? 3.8 : 0)}
-            y="18"
-            textAnchor="middle"
-            fill={chosen(selectedSlot, slot.slot) ? INK : MUTED}
-            fontSize="11"
-            fontWeight={chosen(selectedSlot, slot.slot) ? "750" : "500"}
-          >
-            {slot.slot}
-          </text>
-        ))}
-        <path
-          d={`M${seamLeft} 91V259 M${seamRight} 91V259`}
-          stroke="#c5cfc6"
-          strokeWidth="1"
-          strokeDasharray="4 4"
-          fill="none"
-        />
-        {Array.from({ length: result.slots + 1 }, (_, index) => {
-          const x = firstSlotX + (index - 1) * actualStep + slotGap / 2;
-          return (
-            <rect
-              key={index}
-              x={Math.max(6, x)}
-              y={yTop}
-              width={Math.max(
-                0,
-                Math.min(width - 6, x + actualStep - slotGap) - Math.max(6, x),
-              )}
-              height={yBottom - yTop}
-              rx="1.5"
-              fill={TOOTH}
-              fillOpacity="0.89"
-              stroke="#187db1"
-              strokeWidth="0.7"
-            />
-          );
-        })}
-        {coils.map((coil, index) => {
-          const color = PHASE_COLORS[coil.phase];
-          const active = phaseActive(selectedPhase, coil.phase);
-          const selected =
-            chosen(selectedSlot, coil.positiveSlot) ||
-            chosen(selectedSlot, coil.negativeSlot);
-          const xp = xSlot(coil.positiveSlot, coil.positiveLayer || 1);
-          const xn = xSlot(coil.negativeSlot, coil.negativeLayer || 1);
-          const offset = 22 + (index % 5) * 8;
-          const yt = yTop - 13 - offset;
-          const yb = yBottom + 13 + offset;
-          const forwardDistance = mod(
-            coil.negativeSlot - coil.positiveSlot,
-            result.slots,
-          );
-          const intendedSpan = mod(
-            Math.abs(coil.span ?? forwardDistance),
-            result.slots,
-          );
-          const goesForward = coil.direction
-            ? coil.direction > 0
-            : forwardDistance === intendedSpan;
-          const wraps = goesForward ? xn < xp : xp < xn;
-          const top = [];
-          const bottom = [];
-          let labelX;
-          if (wraps) {
-            const exit = goesForward ? seamRight : seamLeft;
-            const entry = goesForward ? seamLeft : seamRight;
-            top.push(`M${xp} ${yTop} L${xp} ${yTop - 5} L${exit} ${yt}`);
-            top.push(`M${entry} ${yt} L${xn} ${yTop - 5} L${xn} ${yTop}`);
-            bottom.push(
-              `M${xp} ${yBottom} L${xp} ${yBottom + 5} L${exit} ${yb}`,
-            );
-            bottom.push(
-              `M${entry} ${yb} L${xn} ${yBottom + 5} L${xn} ${yBottom}`,
-            );
-            labelX = (xp + exit) / 2;
-            edgeMarks.push({
-              key: coil.id ?? index,
-              color,
-              y: yt,
-              active,
-              selected,
-            });
-          } else {
-            labelX = (xp + xn) / 2;
-            top.push(
-              `M${xp} ${yTop} L${xp} ${yTop - 5} L${labelX} ${yt} L${xn} ${yTop - 5} L${xn} ${yTop}`,
-            );
-            bottom.push(
-              `M${xp} ${yBottom} L${xp} ${yBottom + 5} L${labelX} ${yb} L${xn} ${yBottom + 5} L${xn} ${yBottom}`,
-            );
-          }
-          return (
-            <g
-              key={coil.id ?? index}
-              opacity={
-                active ? (selectedSlot && !selected ? 0.43 : 0.92) : 0.12
-              }
-              fill="none"
-              stroke={color}
-              strokeWidth={selected ? 2.8 : 1.6}
-              strokeLinejoin="round"
-              strokeLinecap="round"
+        <title id={`${id}-title`}>{`${header}. ${subtitle}`}</title>
+        <desc
+          id={`${id}-desc`}
+        >{`Abwicklung des Stators mit blauen rechteckigen Zähnen und weißen Nuten dazwischen. Die Leiter liegen ausschließlich in den Nuten. Gleiche Spulenweiten besitzen gleiche Wickelkopfsteigungen. Der Schnitt in Nut ${layout.startSlot} wird an beiden Rändern gezeigt; seine elektrischen Leiterseiten werden insgesamt genau einmal dargestellt. ${isSeries ? "Jeder Strang bildet einen unverzweigten Leiterweg zwischen zwei offenen Stranganschlüssen. Die unteren V-Köpfe sind an den Spulenenden geöffnet und über die gezeichneten Gruppenverbindungen additiv in Reihe geschaltet. Kreuzungen ohne Verbindungspunkt sind getrennt." : "Die einzelnen Spulen besitzen offene Anschlussenden im unteren Wickelkopf. Eine geschlossene kurzgeschlossene Einzelwindung wird nicht gezeichnet."} Die Polteilung und die Zonen der ersten Lage sind markiert. Bei zwei Lagen ist die seitliche Auffächerung nur eine schematische Trennung der Leiter.`}</desc>
+        <defs>
+          {Object.entries(PHASE_COLORS).map(([phase, color]) => (
+            <marker
+              key={phase}
+              id={`${id}-${phase}`}
+              markerWidth="4.5"
+              markerHeight="4.5"
+              refX="4"
+              refY="2.25"
+              orient="auto"
+              markerUnits="userSpaceOnUse"
             >
-              <title>{`Spule ${coil.id ?? index + 1}: Strang ${coil.phase}, Nut ${coil.positiveSlot} (positiv, Lage ${coil.positiveLayer || 1}) ↔ Nut ${coil.negativeSlot} (negativ, Lage ${coil.negativeLayer || 1}), Weite ${coil.span}`}</title>
-              {top.map((path, i) => (
-                <path key={`t${i}`} d={path} />
-              ))}
-              {!isSeries &&
-                bottom.map((path, i) => <path key={`b${i}`} d={path} />)}
-              <path d={`M${xp} ${yTop}V${yBottom} M${xn} ${yTop}V${yBottom}`} />
-              <path
-                d={`M${xp} 184V162 M${xn} 162V184`}
-                markerEnd={`url(#${id}-${coil.phase})`}
-                strokeWidth={selected ? 2.2 : 1.5}
+              <path d="M0 0L4.5 2.25L0 4.5Z" fill={color} />
+            </marker>
+          ))}
+          <marker
+            id={`${id}-dimension`}
+            markerWidth="7"
+            markerHeight="7"
+            refX="6"
+            refY="3.5"
+            orient="auto-start-reverse"
+            markerUnits="userSpaceOnUse"
+          >
+            <path d="M0 0L7 3.5L0 7Z" fill={INK} />
+          </marker>
+          <clipPath id={`${id}-clip`}>
+            <rect
+              x={seamLeft - 8}
+              y="0"
+              width={seamRight - seamLeft + 16}
+              height={height}
+            />
+          </clipPath>
+        </defs>
+        <g fill="none" stroke={INK} strokeWidth="1">
+          <line
+            x1={dimensionX1 + 2}
+            y1={polePitchY}
+            x2={dimensionX2 - 2}
+            y2={polePitchY}
+            markerStart={`url(#${id}-dimension)`}
+            markerEnd={`url(#${id}-dimension)`}
+          />
+          <path
+            d={`M${dimensionX1} ${polePitchY - 7}v17 M${dimensionX2} ${polePitchY - 7}v17`}
+            stroke="#adb7a4"
+            strokeDasharray="3 3"
+          />
+        </g>
+        <text
+          x={(dimensionX1 + dimensionX2) / 2}
+          y={polePitchY - 9}
+          fill={INK}
+          fontFamily="Georgia, serif"
+          fontStyle="italic"
+          fontSize="13"
+          textAnchor="middle"
+        >{`τₚ = ${fmt(result?.polePitch, 3)} Nuten`}</text>
+        <text
+          x={seamRight}
+          y={polePitchY + 2}
+          textAnchor="end"
+          fill={MUTED}
+          fontSize="9"
+        >{`Schnitt: Nut ${layout.startSlot}${startSlot === "auto" ? " · automatisch" : ""}`}</text>
+        <text x="12" y={zoneY + 3} fill={MUTED} fontSize="7.5">
+          ZONE L1
+        </text>
+        <g>
+          {zoneRuns.map((run, index) => (
+            <g
+              key={`zone-${index}`}
+              opacity={phaseActive(selectedPhase, run.phase) ? 1 : 0.22}
+            >
+              <rect
+                x={run.x1 + 0.5}
+                y={zoneY - 10}
+                width={Math.max(0, run.x2 - run.x1 - 1)}
+                height="20"
+                rx="2"
+                fill={PHASE_COLORS[run.phase]}
+                fillOpacity="0.08"
               />
-              {showCoilLabels && (
-                <text
-                  x={labelX}
-                  y={yt - 5}
-                  textAnchor="middle"
-                  stroke="none"
-                  fill={color}
-                  fontSize="9"
-                  fontWeight="600"
-                >
-                  {coil.id ?? `${coil.phase}${index + 1}`}
-                </text>
-              )}
+              <text
+                x={(run.x1 + run.x2) / 2}
+                y={zoneY + 3}
+                textAnchor="middle"
+                fill={PHASE_COLORS[run.phase]}
+                fontWeight="600"
+                fontSize="10"
+              >
+                {run.zone}
+              </text>
+            </g>
+          ))}
+        </g>
+        <g
+          stroke="#acb7a4"
+          strokeWidth="0.8"
+          strokeDasharray="4 5"
+          opacity="0.6"
+        >
+          {[
+            ...new Set([
+              seamLeft,
+              ...zoneRuns.slice(1).map((run) => run.x1),
+              seamRight,
+            ]),
+          ].map((x) => (
+            <line key={x} x1={x} x2={x} y1={zoneY + 13} y2={bodyBottom + 8} />
+          ))}
+        </g>
+        {(layout.teeth || []).map((tooth, index) => {
+          const previousSlot = slots
+            .filter((slot) => slot.x <= tooth.x + tooth.width / 2)
+            .at(-1);
+          const toothNumber =
+            tooth.toothNumber ?? previousSlot?.slot ?? index + 1;
+          return (
+            <g key={tooth.index ?? index}>
+              <rect
+                data-winding-tooth={toothNumber}
+                x={tooth.x}
+                y={tooth.y ?? bodyTop}
+                width={tooth.width}
+                height={tooth.height ?? bodyBottom - bodyTop}
+                rx="0.5"
+                fill={TOOTH}
+                fillOpacity="0.93"
+                stroke="#1680b7"
+                strokeWidth="0.9"
+              />
+              <text
+                x={tooth.x + tooth.width / 2}
+                y={geometry.toothLabelY ?? (bodyTop + bodyBottom) / 2 + 3}
+                textAnchor="middle"
+                fill="#eaf8ff"
+                fontSize={pitch < 40 ? "8" : "9"}
+                fontWeight="600"
+              >{`Z${toothNumber}`}</text>
             </g>
           );
         })}
-        {edgeMarks.map((mark) => (
-          <g
-            key={mark.key}
-            opacity={mark.active ? 0.75 : 0.12}
-            stroke={mark.color}
-            strokeWidth="1.5"
-            fill="none"
-          >
-            <path
-              d={`M${seamLeft + 4} ${mark.y - 3}l-4 3 4 3 M${seamRight - 4} ${mark.y - 3}l4 3 -4 3`}
-            />
-          </g>
-        ))}
-        {isSeries &&
-          connections.map(({ phase, from, to }, index) => {
-            const xp = xSlot(from.negativeSlot, from.negativeLayer || 1);
-            const xn = xSlot(to.positiveSlot, to.positiveLayer || 1);
-            const y = connectionBase + index * connectionSpacing;
-            const active = phaseActive(selectedPhase, phase);
-            const selected = [
-              from.positiveSlot,
-              from.negativeSlot,
-              to.positiveSlot,
-              to.negativeSlot,
-            ].some((slot) => chosen(selectedSlot, slot));
+        <g>
+          {coilPaths.map((coil, index) => {
+            const positive = coil.positiveSide;
+            const negative = coil.negativeSide;
+            const selected = touches(positive, negative);
+            const color = PHASE_COLORS[coil.phase];
+            const paths = [
+              ...(coil.topPaths || []),
+              ...(coil.bottomPaths || []),
+            ];
+            const labelY =
+              coil.labelY ??
+              Math.min(
+                ...(coil.topPaths || []).flatMap((path) =>
+                  pathPoints(path).map((point) => point.y ?? point[1]),
+                ),
+              ) - 6;
             return (
               <g
-                key={`series-${from.id}-${to.id}`}
-                opacity={
-                  active ? (selectedSlot && !selected ? 0.43 : 0.92) : 0.12
-                }
+                key={coil.id ?? index}
+                data-winding-coil={coil.id}
+                opacity={elementOpacity(coil.phase, selected)}
+                stroke={color}
+                fill="none"
+                strokeWidth={selected ? 2.7 : 1.8}
+                strokeLinejoin="round"
+                strokeLinecap="round"
               >
-                <title>{`Strang ${phase}: negatives Ende der Spule ${from.id} in Nut ${from.negativeSlot}, Lage ${from.negativeLayer || 1}, zum positiven Anfang der Spule ${to.id} in Nut ${to.positiveSlot}, Lage ${to.positiveLayer || 1}. Kreuzungen ohne Punkt sind keine Verbindung.`}</title>
-                <path
-                  d={`M${xp} ${yBottom}V${y}H${xn}V${yBottom}`}
-                  fill="none"
-                  stroke={PHASE_COLORS[phase]}
-                  strokeWidth={selected ? 2.3 : 1.5}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+                <title>{`Spule ${coil.id}: Strang ${coil.phase}, positiv Nut ${positive?.slot} Lage ${positive?.layer}, negativ Nut ${negative?.slot} Lage ${negative?.layer}, Spulenweite ${coil.span} Nuten. Offene Anschlussenden im unteren Wickelkopf.`}</title>
+                {paths.map((path, pathIndex) => (
+                  <polyline
+                    key={`casing-${pathIndex}`}
+                    points={pointsAttribute(casingPoints(path))}
+                    stroke="#fffef9"
+                    strokeWidth="5.4"
+                    aria-hidden="true"
+                  />
+                ))}
+                {paths.map((path, pathIndex) => (
+                  <polyline
+                    key={pathIndex}
+                    points={pointsAttribute(pathPoints(path))}
+                  />
+                ))}
+                {coilPaths.length <= 36 && Number.isFinite(labelY) && (
+                  <text
+                    x={coil.labelX ?? (positive.x + negative.x) / 2}
+                    y={labelY}
+                    textAnchor="middle"
+                    fill={color}
+                    stroke="none"
+                    fontWeight="600"
+                    fontSize="8.5"
+                  >
+                    {coil.id}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+          {sideList.map((side, index) => {
+            const color = PHASE_COLORS[side.phase];
+            const selected = chosen(selectedSlot, side.slot);
+            const top = side.yTop ?? bodyTop;
+            const bottom = side.yBottom ?? bodyBottom;
+            const middle = (top + bottom) / 2;
+            return (
+              <g
+                key={side.nodeId ?? `${side.slot}-${side.layer}-${index}`}
+                data-winding-side={side.nodeId ?? `${side.slot}-${side.layer}`}
+                opacity={elementOpacity(side.phase, selected)}
+                stroke={color}
+                fill="none"
+                strokeLinecap="round"
+              >
+                <title>{`Nut ${side.slot}, Lage ${side.layer}, ${zoneLabel(side)}: ${side.sign > 0 ? "positive Seite, Pfeil nach oben" : "negative Seite, Pfeil nach unten"}`}</title>
+                <line
+                  x1={side.x}
+                  x2={side.x}
+                  y1={top + 4}
+                  y2={bottom - 4}
+                  stroke="#fffef9"
+                  strokeWidth="5.4"
+                  aria-hidden="true"
+                />
+                <line
+                  x1={side.x}
+                  x2={side.x}
+                  y1={top}
+                  y2={bottom}
+                  strokeWidth={selected ? 2.7 : 1.8}
+                />
+                <line
+                  x1={side.x}
+                  x2={side.x}
+                  y1={middle + (side.sign > 0 ? 12 : -12)}
+                  y2={middle + (side.sign > 0 ? -12 : 12)}
+                  strokeWidth="1.5"
+                  markerEnd={`url(#${id}-${side.phase})`}
                 />
               </g>
             );
           })}
-        {isSeries &&
-          terminals.map((terminal, index) => {
-            const xp = xSlot(terminal.slot, terminal.layer);
-            const anchor =
-              left +
-              (index * (width - 2 * left)) / Math.max(1, terminals.length - 1);
-            const routeY = terminalRouteBase + index * 9;
-            const active = phaseActive(selectedPhase, terminal.phase);
-            const selected = chosen(selectedSlot, terminal.slot);
-            const color = PHASE_COLORS[terminal.phase];
+          {connections.map((connection, index) => {
+            const selected = touches(
+              sideByNode.get(connection.fromNode),
+              sideByNode.get(connection.toNode),
+            );
             return (
               <g
-                key={terminal.label}
-                opacity={active ? (selectedSlot && !selected ? 0.55 : 1) : 0.15}
+                key={connection.id ?? index}
+                data-winding-link={connection.id}
+                opacity={elementOpacity(connection.phase, selected)}
+                stroke={PHASE_COLORS[connection.phase]}
+                strokeWidth={selected ? 2.5 : 1.8}
                 fill="none"
-                stroke={color}
-                strokeWidth={selected ? 2.4 : 1.7}
                 strokeLinecap="round"
                 strokeLinejoin="round"
               >
-                <title>{`${terminal.label}: ${terminal.label.endsWith("1") ? "positiver Anfang der ersten" : "negatives Ende der letzten"} Spule ${terminal.coil.id}, Nut ${terminal.slot}, Lage ${terminal.layer}. Offener Anschluss des Strangs ${terminal.phase}.`}</title>
-                <path
-                  d={`M${xp} ${yBottom}V${routeY}H${anchor}V${terminalY - 4}`}
+                <title>{`Strang ${connection.phase}: additive Serienverbindung ${connection.fromCoilId} → ${connection.toCoilId}, ${connection.fromNode} → ${connection.toNode}. Kreuzungen ohne Punkt sind getrennt.`}</title>
+                {allPaths(connection).map((path, pathIndex) => (
+                  <polyline
+                    key={`casing-${pathIndex}`}
+                    points={pointsAttribute(casingPoints(path))}
+                    stroke="#fffef9"
+                    strokeWidth="5.4"
+                    aria-hidden="true"
+                  />
+                ))}
+                {allPaths(connection).map((path, pathIndex) => (
+                  <polyline
+                    key={pathIndex}
+                    points={pointsAttribute(pathPoints(path))}
+                  />
+                ))}
+              </g>
+            );
+          })}
+          {terminals.map((terminal, index) => {
+            const color = PHASE_COLORS[terminal.phase];
+            const side = sideByNode.get(terminal.nodeId);
+            const terminalLabel = terminal.label ?? terminal.id;
+            const partner =
+              !isSeries &&
+              terminals.find(
+                (candidate) =>
+                  candidate.coilId === terminal.coilId &&
+                  candidate.id !== terminal.id,
+              );
+            const labelOnLeft = partner && terminal.x < partner.x;
+            const labelX =
+              terminal.labelX ??
+              (partner ? terminal.x + (labelOnLeft ? -5 : 5) : terminal.x);
+            const labelAnchor =
+              terminal.textAnchor ??
+              (partner ? (labelOnLeft ? "end" : "start") : "middle");
+            return (
+              <g
+                key={terminal.id ?? index}
+                data-winding-terminal={terminalLabel}
+                opacity={elementOpacity(terminal.phase, touches(side))}
+                stroke={color}
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                fill="none"
+              >
+                <title>{`${terminalLabel}: offener ${terminal.type === "start" ? "Anfang" : "Endanschluss"} des Strangs ${terminal.phase}${side ? `, Nut ${side.slot}, Lage ${side.layer}` : ""}`}</title>
+                {allPaths(terminal).map((path, pathIndex) => (
+                  <polyline
+                    key={`casing-${pathIndex}`}
+                    points={pointsAttribute(casingPoints(path))}
+                    stroke="#fffef9"
+                    strokeWidth="5.4"
+                    aria-hidden="true"
+                  />
+                ))}
+                {allPaths(terminal).map((path, pathIndex) => (
+                  <polyline
+                    key={pathIndex}
+                    points={pointsAttribute(pathPoints(path))}
+                  />
+                ))}
+                <circle
+                  cx={terminal.x}
+                  cy={terminal.y}
+                  r="3.2"
+                  fill="#fffef9"
                 />
-                <circle cx={anchor} cy={terminalY} r="4" fill="white" />
                 <text
-                  x={anchor}
-                  y={terminalY + 20}
-                  textAnchor="middle"
-                  fontSize="12"
-                  fontWeight="700"
+                  x={labelX}
+                  y={terminal.labelY ?? terminal.y + 16}
+                  textAnchor={labelAnchor}
                   fill={color}
                   stroke="none"
+                  fontSize={isSeries ? "11" : "9"}
+                  fontWeight="650"
                 >
-                  {terminal.label}
+                  {terminalLabel}
                 </text>
               </g>
             );
           })}
-        {assignments.map((slot) => {
-          const x = firstSlotX + (slot.slot - 1) * actualStep;
+        </g>
+        {seamMarks.map((mark, index) => (
+          <g
+            key={`seam-${index}`}
+            opacity={phaseActive(selectedPhase, mark.phase) ? 0.9 : 0.15}
+            stroke={PHASE_COLORS[mark.phase]}
+            strokeWidth="1"
+            fill="none"
+          >
+            <title>{`${mark.kind === "series" ? "Serienverbindung" : "Spule"} ${mark.coil}: Fortsetzung über den Abwicklungsschnitt auf gleicher Höhe`}</title>
+            <path
+              d={`M${mark.x - 3} ${mark.y - 4}l5 8 M${mark.x + 1} ${mark.y - 4}l5 8`}
+            />
+          </g>
+        ))}
+        <text x="12" y={slotLabelY} fill={MUTED} fontSize="8.5">
+          NUT
+        </text>
+        {slots.map((slot, index) => {
           const selected = chosen(selectedSlot, slot.slot);
+          const isEdge = index === 0 || index === slots.length - 1;
           return (
             <g
-              key={slot.slot}
+              key={`${slot.slot}-${index}`}
               role="button"
               tabIndex="0"
-              aria-label={`Nut ${slot.slot} im Wickelschema auswählen, Zone ${zoneLabel(slot)}`}
+              aria-label={`Nut ${slot.slot}${isEdge ? ", am Abwicklungsschnitt" : ""}, ${(slot.sides || []).map((side) => `Lage ${side.layer}, ${zoneLabel(side)}`).join("; ")}`}
               aria-pressed={selected}
               onClick={() => onSelectSlot?.(slot.slot)}
               onKeyDown={keyboard(() => onSelectSlot?.(slot.slot))}
               style={{ cursor: "pointer" }}
             >
-              <title>{`Nut ${slot.slot}: weißer Zwischenraum zwischen zwei blauen Zähnen`}</title>
+              <title>{`Nut ${slot.slot}${isEdge ? ": geteilte Schnittnut, elektrisch nur einmal vorhanden" : ": weißer Spalt zwischen den blauen Zähnen"}`}</title>
               <rect
-                x={x - slotGap / 2}
-                y={yTop - 2}
-                width={slotGap}
-                height={yBottom - yTop + 4}
+                x={slot.x - slotGap / 2 - 1}
+                y={bodyTop - 3}
+                width={slotGap + 2}
+                height={bodyBottom - bodyTop + 6}
                 fill="transparent"
                 stroke={selected ? INK : "transparent"}
-                strokeWidth="1.3"
+                strokeWidth="1"
                 strokeDasharray="3 3"
-                rx="2"
+                rx="1"
               />
+              <text
+                x={slot.x}
+                y={slotLabelY}
+                textAnchor="middle"
+                fill={selected ? INK : MUTED}
+                fontSize="10"
+                fontWeight={selected ? "750" : "500"}
+                paintOrder="stroke"
+                stroke="#fffef9"
+                strokeWidth="3"
+              >
+                {slot.slot}
+              </text>
+            </g>
+          );
+        })}
+        {groups.map((group, index) => {
+          const samePhaseGroups = groups.filter(
+            (candidate) => candidate.phase === group.phase,
+          );
+          const groupIndex =
+            samePhaseGroups.findIndex(
+              (candidate) => candidate.id === group.id,
+            ) + 1;
+          const label =
+            group.label && group.label !== group.phase
+              ? group.label
+              : samePhaseGroups.length > 1
+                ? `${group.phase}${groupIndex}`
+                : `Strang ${group.phase}`;
+          return (
+            <g
+              key={group.id ?? index}
+              opacity={phaseActive(selectedPhase, group.phase) ? 1 : 0.2}
+            >
+              <text
+                x={group.centerX ?? (group.startX + group.endX) / 2}
+                y={group.labelY ?? groupLabelY}
+                textAnchor="middle"
+                fill={PHASE_COLORS[group.phase]}
+                fontSize={groups.length > 18 ? "9" : "11"}
+                fontWeight="650"
+              >
+                {label}
+              </text>
             </g>
           );
         })}
         <g
-          transform={`translate(${width / 2 - 196} ${isSeries ? terminalY + 49 : 344})`}
-          fontSize="10.5"
+          transform={`translate(${Math.max(24, width / 2 - (layerCount === 2 ? 266 : 194))} ${legendY})`}
+          fontSize="9.5"
           fill={MUTED}
         >
-          <rect x="0" y="-8" width="12" height="11" fill={TOOTH} rx="1" />
-          <text x="18" y="1">
-            Zahn
+          <rect x="0" y="-8" width="11" height="11" fill={TOOTH} />
+          <text x="17" y="1">
+            Zahn Zₙ
           </text>
           <rect
-            x="73"
+            x="89"
             y="-8"
-            width="12"
+            width="11"
             height="11"
             fill="white"
-            stroke="#b9c6bd"
+            stroke="#c4cec0"
           />
-          <path d="M79 -7V2" stroke={PHASE_COLORS.A} strokeWidth="1.5" />
-          <text x="91" y="1">
+          <path d="M94.5 -7V2" stroke={PHASE_COLORS.A} strokeWidth="1.4" />
+          <text x="106" y="1">
             Nut mit Leiter
           </text>
-          <path d="M203 -5h18m-3 -3 3 3 -3 3" stroke={MUTED} fill="none" />
-          <text x="229" y="1">
-            Fortsetzung am Rand
+          <path d="M218 -8l5 9m0 -9 5 9" stroke={MUTED} fill="none" />
+          <text x="237" y="1">
+            Fortsetzung
           </text>
+          {layerCount === 2 && (
+            <text x="334" y="1">
+              L2 links · L1 rechts*
+            </text>
+          )}
         </g>
-        {isSeries && (
-          <g textAnchor="middle" fill={MUTED} fontSize="10">
-            <text x={width / 2} y={height - 23}>
-              Additive Reihenschaltung in Spulenreihenfolge · Kreuzungen ohne
-              Punkt sind getrennt
-            </text>
-            <text x={width / 2} y={height - 8}>
-              Offene Stranganschlüsse · keine Stern-/Dreieckbrücken ·
-              Wickelköpfe schematisch
-            </text>
-          </g>
-        )}
+        <text
+          x={width / 2}
+          y={legendY + 21}
+          textAnchor="middle"
+          fill={MUTED}
+          fontSize="9"
+        >
+          {layerCount === 2
+            ? "*Seitliche Auffächerung zur Lesbarkeit; beide Lagen gehören zur selben Nut."
+            : "Zₙ bezeichnet den Zahn nach Nut n im zunehmenden Nutumlauf."}
+        </text>
+        <text
+          x={width / 2}
+          y={legendY + 36}
+          textAnchor="middle"
+          fill={MUTED}
+          fontSize="8.5"
+        >
+          {isSeries
+            ? "Offene Stranganschlüsse · Kreuzungen ohne Punkt getrennt · schematische Gruppenverbindung"
+            : "Offene Einzelspulen · Spulenenden am unteren V-Kopf · keine vorgegebene Strangverschaltung"}
+        </text>
       </svg>
     </div>
   );

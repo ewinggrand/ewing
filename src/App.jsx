@@ -1,5 +1,6 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { computeWinding } from "./domain/winding.js";
+import { buildWindingLayout } from "./domain/windingLayout.js";
 import { computeSpectrum } from "./domain/spectrum.js";
 import SpectrumPanel from "./components/SpectrumPanel.jsx";
 import {
@@ -122,7 +123,7 @@ function saveFile(name, content, type) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function exportCsv(result) {
+function exportCsv(result, layout) {
   const rows = [
     [
       "Nut",
@@ -156,7 +157,7 @@ function exportCsv(result) {
       "Spulenweite",
     ],
   );
-  result.coils.forEach((c) =>
+  (layout.orderedCoils || result.coils).forEach((c) =>
     rows.push([
       c.id,
       c.phase,
@@ -165,6 +166,54 @@ function exportCsv(result) {
       c.positiveLayer,
       c.negativeLayer,
       c.span,
+    ]),
+  );
+  rows.push(
+    [],
+    ["Abwicklung beginnt in Nut", layout.startSlot],
+    [],
+    ["Strang", "Serienfolge"],
+  );
+  (layout.topology?.phaseChains || []).forEach((chain) => {
+    const start = layout.terminals.find(
+      (terminal) => terminal.phase === chain.phase && terminal.type === "start",
+    );
+    const end = layout.terminals.find(
+      (terminal) => terminal.phase === chain.phase && terminal.type === "end",
+    );
+    rows.push([
+      chain.phase,
+      [start?.label, ...chain.coilIds, end?.label].filter(Boolean).join(" → "),
+    ]);
+  });
+  rows.push(
+    [],
+    [
+      "Strang",
+      "Von Spule (Minus)",
+      "Nach Spule (Plus)",
+      "Von-Knoten",
+      "Nach-Knoten",
+    ],
+  );
+  (layout.seriesConnections || []).forEach((connection) =>
+    rows.push([
+      connection.phase,
+      connection.fromCoilId,
+      connection.toCoilId,
+      connection.fromNode,
+      connection.toNode,
+    ]),
+  );
+  rows.push([], ["Klemme", "Strang", "Spule", "Nut", "Lage", "Knoten"]);
+  (layout.terminals || []).forEach((terminal) =>
+    rows.push([
+      terminal.label,
+      terminal.phase,
+      terminal.coilId,
+      terminal.slot,
+      terminal.layer,
+      terminal.nodeId,
     ]),
   );
   saveFile(
@@ -452,6 +501,15 @@ export default function App() {
   const [selectedSlot, setSelectedSlot] = useState(null);
   const [selectedPhase, setSelectedPhase] = useState(null);
   const [connectionMode, setConnectionMode] = useState("series");
+  const [windingStartSlot, setWindingStartSlot] = useState("auto");
+  const windingLayout = useMemo(
+    () =>
+      buildWindingLayout(result, {
+        startSlot: windingStartSlot,
+        connectionMode: "series",
+      }),
+    [result, windingStartSlot],
+  );
   const [spectrumExport, setSpectrumExport] = useState(null);
   const handleSpectrumChange = useCallback(
     (data) => {
@@ -475,6 +533,7 @@ export default function App() {
         coilSpan: next.coilSpan === "auto" ? "auto" : Number(next.coilSpan),
       });
       setResult(answer);
+      setWindingStartSlot("auto");
       setError("");
       setSelectedSlot(null);
       setSelectedPhase(null);
@@ -792,7 +851,7 @@ export default function App() {
                     <div className="export-menu">
                       <button
                         onClick={() => {
-                          exportCsv(result);
+                          exportCsv(result, windingLayout);
                           setExportOpen(false);
                           setStatus(
                             "Nutbelegung und Spulenliste als CSV exportiert.",
@@ -816,6 +875,11 @@ export default function App() {
                             JSON.stringify(
                               {
                                 ...result,
+                                windingLayout: {
+                                  ...windingLayout,
+                                  displayMode: connectionMode,
+                                  automaticStart: windingStartSlot === "auto",
+                                },
                                 spectrum:
                                   spectrumExport?.winding === result
                                     ? spectrumExport.data
@@ -1045,7 +1109,7 @@ export default function App() {
                     <StepTitle
                       number="04"
                       title="Wickelschema"
-                      subtitle="Abgewickelte Ansicht des Stators · einzelne Spulen"
+                      subtitle="Abwicklung des Stators · Spulengruppen und Stranganschlüsse"
                     >
                       <button
                         className="text-button"
@@ -1057,6 +1121,8 @@ export default function App() {
                     </StepTitle>
                     <WindingDiagram
                       result={result}
+                      connectionMode={connectionMode}
+                      startSlot={windingStartSlot}
                       selectedPhase={selectedPhase}
                       selectedSlot={selectedSlot}
                       onSelectSlot={setSelectedSlot}
@@ -1071,7 +1137,7 @@ export default function App() {
                       <span>
                         y = {result.coilSpan} ·{" "}
                         {result.layers === 1 ? "eine Lage" : "zwei Lagen"} ·
-                        Umfang periodisch
+                        Schnitt in Nut {windingLayout.startSlot ?? "—"}
                       </span>
                     </div>
                   </article>
@@ -1117,13 +1183,48 @@ export default function App() {
                       </div>
                       <span>
                         {connectionMode === "series"
-                          ? "3 Stränge · 6 Klemmen"
+                          ? windingLayout.valid
+                            ? "3 Stränge · 6 Klemmen"
+                            : "Keine gültige Verschaltung"
                           : "Spulen unabhängig betrachten"}
+                      </span>
+                    </div>
+                    <div className="winding-cut-controls">
+                      <label htmlFor="winding-start-slot">
+                        Abwicklung beginnen bei
+                      </label>
+                      <select
+                        id="winding-start-slot"
+                        value={windingStartSlot}
+                        disabled={!windingLayout.valid}
+                        onChange={(event) =>
+                          setWindingStartSlot(
+                            event.target.value === "auto"
+                              ? "auto"
+                              : Number(event.target.value),
+                          )
+                        }
+                      >
+                        <option value="auto">
+                          {windingLayout.valid
+                            ? `Automatisch · Nut ${windingLayout.startSlot}`
+                            : "Kein gültiges Wickelschema"}
+                        </option>
+                        {Array.from({ length: result.slots }, (_, index) => (
+                          <option key={index + 1} value={index + 1}>
+                            Nut {index + 1}
+                          </option>
+                        ))}
+                      </select>
+                      <span>
+                        Nut am Anfang und Ende ist dieselbe Nut am
+                        Umfangsschnitt.
                       </span>
                     </div>
                     <WindingDiagram
                       result={result}
                       connectionMode={connectionMode}
+                      startSlot={windingStartSlot}
                       selectedPhase={selectedPhase}
                       selectedSlot={selectedSlot}
                       onSelectSlot={setSelectedSlot}
@@ -1144,17 +1245,60 @@ export default function App() {
                     {connectionMode === "series" && (
                       <p className="panel-note">
                         A → U1/U2 · B → V1/V2 · C → W1/W2. Alle Spulen eines
-                        Strangs sind gleichsinnig in Reihe verbunden. Stern-
-                        oder Dreieckbrücken und eine Optimierung der
-                        Verbindungswege sind nicht vorgegeben.
+                        Strangs sind gleichsinnig in geometrischer Gruppenfolge
+                        verbunden. Die Pfeile beziehen sich auf diese
+                        Anschlussrichtung. Vertauschte Stranganschlüsse kehren
+                        sämtliche Pfeile um. Stern- oder Dreieckbrücken sind
+                        nicht vorgegeben.
                       </p>
                     )}
                   </article>
+                  {windingLayout.valid && (
+                    <article className="panel winding-chains-panel">
+                      <StepTitle
+                        number="05"
+                        title="Strangverbindungen"
+                        subtitle="Jede Zeile ist ein durchgehender Serienpfad mit zwei offenen Klemmen."
+                      />
+                      <div className="winding-chain-list">
+                        {(windingLayout.topology?.phaseChains || [])
+                          .filter(
+                            (chain) =>
+                              !selectedPhase || chain.phase === selectedPhase,
+                          )
+                          .map((chain) => {
+                            const start = windingLayout.terminals.find(
+                              (terminal) =>
+                                terminal.phase === chain.phase &&
+                                terminal.type === "start",
+                            );
+                            const end = windingLayout.terminals.find(
+                              (terminal) =>
+                                terminal.phase === chain.phase &&
+                                terminal.type === "end",
+                            );
+                            return (
+                              <div
+                                key={chain.phase}
+                                className="winding-chain"
+                                style={{ "--phase-color": COLORS[chain.phase] }}
+                              >
+                                <b>{chain.phase}</b>
+                                <span>
+                                  {start?.label} → {chain.coilIds.join(" → ")} →{" "}
+                                  {end?.label}
+                                </span>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </article>
+                  )}
                   <article className="panel">
                     <StepTitle
                       number="05"
                       title="Spulen & Nutbelegung"
-                      subtitle="Plus und Minus bezeichnen die elektrische Orientierung der Spulenseiten."
+                      subtitle="Spulen in der gezeichneten Serienfolge · Plus/Minus bezeichnet die elektrische Orientierung."
                     >
                       <span className="card-meta">
                         {result.coils.length} Spulen
@@ -1172,7 +1316,7 @@ export default function App() {
                           </tr>
                         </thead>
                         <tbody>
-                          {result.coils
+                          {(windingLayout.orderedCoils || result.coils)
                             .filter(
                               (c) =>
                                 !selectedPhase || c.phase === selectedPhase,
@@ -1334,7 +1478,7 @@ export default function App() {
             Wicklungsatelier<span className="footer-divider">/</span>Verstehen.
             Berechnen. Entwickeln.
           </span>
-          <span>Dreiphasige Statorwicklungen · Entwurfsmodell v0.2</span>
+          <span>Dreiphasige Statorwicklungen · Entwurfsmodell v0.3</span>
         </footer>
       </main>
     </>
