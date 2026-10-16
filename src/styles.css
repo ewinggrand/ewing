@@ -2006,6 +2006,16 @@ tbody tr:hover {
 }
 .tabs {
   gap: 21px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.tabs button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.export-control {
+  flex-shrink: 0;
 }
 @media (max-width: 1150px) {
   .tabs {

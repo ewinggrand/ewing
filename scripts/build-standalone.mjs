@@ -71,12 +71,17 @@ console.log(
   `Offline-App erstellt: ${output} (${Math.round(Buffer.byteLength(html) / 1024)} KiB)`,
 );
 
-const instructions = `Wicklungsatelier · Version 0.3
+const instructions = `Wicklungsatelier · Version 0.4
 
 wicklungsatelier.html per Doppelklick im eigenen Browser öffnen.
 Keine Installation und keine Internetverbindung erforderlich.
 Der Reiter Wickelschema zeigt Spulengruppen, offene Stranganschlüsse und die wählbare Abwicklung.
 Der Reiter Spektrum zeigt Fourier-Koeffizienten und Folienreferenzen.
+Der Reiter Induktivität zeigt Spulenachsen, Wicklungsfaktoren und eine
+mathematische Herleitung von Durchflutung, Flussverkettung und Induktivitäten.
+Geometrie, effektiven Luftspalt und Windungszahl auf die eigene Maschine anpassen:
+Die voreingestellten Größen sind ausdrücklich Beispielwerte.
+Berechnet werden lineare Luftspaltinduktivitäten ohne Nut-/Wickelkopfstreuung.
 
 Q = Nutenzahl, p = Polpaarzahl.
 Die automatische Auswahl optimiert innerhalb des dokumentierten 60-Grad-Zonenmodells.

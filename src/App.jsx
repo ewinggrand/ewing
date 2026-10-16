@@ -3,6 +3,7 @@ import { computeWinding } from "./domain/winding.js";
 import { buildWindingLayout } from "./domain/windingLayout.js";
 import { computeSpectrum } from "./domain/spectrum.js";
 import SpectrumPanel from "./components/SpectrumPanel.jsx";
+import InductancePanel from "./components/InductancePanel.jsx";
 import {
   SlotStar,
   PhaseStar,
@@ -226,14 +227,23 @@ function exportCsv(result, layout) {
 function exportDiagram(result, onStatus) {
   const svgs = Array.from(
     document.querySelectorAll("[data-export-diagrams] svg.diagram-svg"),
-  );
+  ).filter((svg) => !svg.closest("[hidden]"));
   if (!svgs.length) {
-    onStatus("Bitte zuerst Analyse, Wickelschema oder Spektrum öffnen.");
+    onStatus("Bitte zuerst eine Ansicht mit Diagrammen öffnen.");
     return;
   }
   let y = 80;
   const content = svgs
     .map((svg) => {
+      let label = "";
+      if (svgs.length > 1 && svg.dataset.exportTitle) {
+        label = `<text x="35" y="${y + 12}" fill="#344132" font-size="15" font-family="sans-serif">${escapeXml(svg.dataset.exportTitle)}</text>`;
+        y += 28;
+        if (svg.dataset.exportSubtitle) {
+          label += `<text x="35" y="${y + 4}" fill="#66736c" font-size="11" font-family="sans-serif">${escapeXml(svg.dataset.exportSubtitle)}</text>`;
+          y += 22;
+        }
+      }
       const node = svg.cloneNode(true);
       node.setAttribute("style", "font-family: sans-serif");
       const box = svg.viewBox.baseVal;
@@ -246,11 +256,11 @@ function exportDiagram(result, onStatus) {
       node.setAttribute("width", "1130");
       node.setAttribute("height", String(h));
       y += h + 40;
-      return new XMLSerializer().serializeToString(node);
+      return label + new XMLSerializer().serializeToString(node);
     })
     .join("");
-  const escapeXml = (value) =>
-    String(value).replace(
+  function escapeXml(value) {
+    return String(value).replace(
       /[&<>"']/g,
       (c) =>
         ({
@@ -261,6 +271,7 @@ function exportDiagram(result, onStatus) {
           "'": "&apos;",
         })[c],
     );
+  }
   const heading =
     svgs.length === 1 && svgs[0].dataset.exportTitle
       ? `Wicklungsatelier · ${svgs[0].dataset.exportTitle}`
@@ -514,6 +525,13 @@ export default function App() {
   const handleSpectrumChange = useCallback(
     (data) => {
       setSpectrumExport({ winding: result, data });
+    },
+    [result],
+  );
+  const [inductanceExport, setInductanceExport] = useState(null);
+  const handleInductanceChange = useCallback(
+    (data) => {
+      setInductanceExport({ winding: result, data });
     },
     [result],
   );
@@ -816,6 +834,7 @@ export default function App() {
                   { id: "analyse", label: "Analyse" },
                   { id: "wicklung", label: "Wickelschema" },
                   { id: "spektrum", label: "Spektrum" },
+                  { id: "induktivitaet", label: "Induktivität" },
                   { id: "methode", label: "Berechnungsweg" },
                 ].map((tab) => (
                   <button
@@ -884,6 +903,10 @@ export default function App() {
                                   spectrumExport?.winding === result
                                     ? spectrumExport.data
                                     : computeSpectrum(result),
+                                inductance:
+                                  inductanceExport?.winding === result
+                                    ? inductanceExport.data
+                                    : null,
                               },
                               null,
                               2,
@@ -1406,6 +1429,12 @@ export default function App() {
                   onDataChange={handleSpectrumChange}
                 />
               )}
+              <div hidden={activeTab !== "induktivitaet"}>
+                <InductancePanel
+                  result={result}
+                  onDataChange={handleInductanceChange}
+                />
+              </div>
               {activeTab === "methode" && (
                 <>
                   <Method result={result} />
@@ -1478,7 +1507,7 @@ export default function App() {
             Wicklungsatelier<span className="footer-divider">/</span>Verstehen.
             Berechnen. Entwickeln.
           </span>
-          <span>Dreiphasige Statorwicklungen · Entwurfsmodell v0.3</span>
+          <span>Dreiphasige Statorwicklungen · Entwurfsmodell v0.4</span>
         </footer>
       </main>
     </>

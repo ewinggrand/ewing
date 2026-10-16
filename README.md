@@ -48,6 +48,7 @@ Die Cloud-Einrichtungsansicht stellt keine automatisch erreichbare Webvorschau b
 4. In **Wickelschema** zwischen offenen Einzelspulen und additiver Serienverschaltung mit U1/U2, V1/V2 und W1/W2 wechseln. Die automatische Abwicklung hält Spulengruppen möglichst zusammen. Über **Abwicklung beginnen bei** lässt sich ausschließlich der angezeigte Umfangsschnitt drehen; die Serienfolge und die Klemmen bleiben gleich. Stern-/Dreieckbrücken sind nicht enthalten.
 5. **Berechnungsweg** erklärt Formeln, Vorzeichen, Bewertungsmaßstab und Grenzen. **Exportieren** bietet Nutbelegung und Spulen als CSV, sichtbare Diagramme als SVG und die vollständige Berechnung als JSON.
 6. **Spektrum** zeigt die räumlichen Fourier-Koeffizienten der aktuellen Wicklung oder vier analytische Vergleichskurven. Strang, Normierung, höchste Ordnung, Realteil/Betrag und Strangpolung lassen sich auswählen. Eine Spektrallinie anklicken, um ihre Werte zu sehen; Spektrums-CSV sowie SVG und JSON stehen als Export bereit.
+7. **Induktivität** führt von den Spulenmittenachsen über Spulen-, Gruppen- und Strangfaktoren zu Durchflutung, Flussverkettung und der vollständigen 3×3-Induktivitätsmatrix. Mittleren Luftspaltdurchmesser, Eisenlänge, effektiven Luftspalt, Windungen je Spule und Strangströme einstellen. Die Anfangswerte sind Rechenbeispiele, keine aus Q und p bestimmten Maschinendaten. Die Formeln werden als MathML gesetzt und funktionieren auch offline.
 
 Die blauen Rechtecke stellen **Zähne** dar. Alle aktiven Spulenseiten liegen in den **weißen Nuten zwischen den Zähnen**. Große Wickelschemata können innerhalb ihrer Karte horizontal gescrollt werden. Die SVGs bleiben unabhängig von der Bildschirmauflösung skalierbar.
 
@@ -101,7 +102,91 @@ Die Formeln werden unverändert ausgewertet. Die gesehnte Referenz besitzt gegen
 
 Die analytischen Referenzen erhalten keine erfundene Polpaarzahl. Wo eine Nutzgrundwelle nicht festgelegt ist, wird ein ausdrücklich benannter Bezugskoeffizient angezeigt. Das Spektrum beschreibt idealisierte Linienleiter und gleiche Windungszahlen; Stromspektren, Flussdichten und mit-/gegenläufige Drehfelder erfordern zusätzliche Maschinen- und Erregungsdaten.
 
-## Mathematisches Modell
+## Luftspaltinduktivität und mathematische Herleitung
+
+Berechnet wird die **lineare Luftspalt-/Hauptinduktivität** der tatsächlichen Statorwicklung bei additiver Serienschaltung aller Spulen eines Strangs. Vorausgesetzt werden ein zylindrischer, gleichmäßiger effektiver Luftspalt δ, ideal magnetisch leitendes Eisen (μFe → ∞), gleiche Windungen n je Spule und idealisierte Linienleiter. Nut- und Wickelkopfstreuung, Sättigung, Eisenreluktanz, Nutungspermeanz und Rotorsalienz sind nicht enthalten. Das Ergebnis ist deshalb keine vollständige gemessene Klemmeninduktivität. Ein vorhandener Carter-Faktor kann außerhalb der App in den effektiven Luftspalt eingerechnet werden.
+
+### 1. Spulenmitten und Faktoren
+
+Für die mechanische Nutlage φs = 2π(s−1)/Q wird jede Spule von ihrer positiven zur negativen Seite verfolgt. Ihre vorzeichenbehaftete Weite ist βc = εc·2πy/Q mit εc ∈ {−1,+1}; die geometrische Mitte ist γc = φc,+ + βc/2. Der Beitrag zur bisherigen Spektrumsnormierung lautet
+
+```math
+C_{c,k}=\frac{\sin(k\beta_c/2)}{k}\,e^{-jk\gamma_c}.
+```
+
+Eine negative Orientierung ändert die Feldrichtung. Daher sind geometrische Spulenmitte und orientierte Feldachse getrennt angegeben. Die orientierte Strangachse der Nutzgrundwelle ist γa = −arg(Ca,p)/p, jeweils modulo 2π/p. Der relative elektrische Winkel lautet Δθc = wrap[p(γc,orientiert − γa)]. Gegeninduktivitäten verwenden immer die **unveränderten komplexen Koeffizienten im gemeinsamen mechanischen Bezug**; die einzeln ausgerichteten Spektrumsplots sind dafür ungeeignet.
+
+Für gleiche absolute Spulenweiten β sind der dimensionslose Spulenfaktor sin(kβ/2), die internen komplexen Gruppenmittel und deren gewichtete Addition getrennt nachvollziehbar. Der geometrische Wicklungsfaktor ist
+
+```math
+k_{w,a,k}=\frac{k|C_{a,k}|}{N_{c,a}}
+=\left|\sin(k\beta/2)\frac{1}{N_{c,a}}
+\sum_{c\in a}\varepsilon_c e^{-jk\gamma_c}\right|.
+```
+
+Der Faktor **1/k** gehört zum integrierten Fourier-Koeffizienten C, nicht zum dimensionslosen Wicklungsfaktor. Gruppen werden komplex und mit ihrer Spulenzahl gewichtet addiert. Ein Produkt separat gemittelter Beträge würde die Achslagen verlieren und ist im Allgemeinen falsch. Die Ordnung k zählt mechanische Umfangswellen; die Nutzgrundwelle liegt bei k=p, die elektrische Ordnung ist ν=k/p. Bei Bruchlochwicklungen können auch mechanische Ordnungen vorkommen, die keine ganzzahligen Vielfachen von p sind.
+
+### 2. Wicklungsfunktion und Durchflutung
+
+Die Wicklungsfunktion Wa(φ) eines Strangs hat an jeder tatsächlichen Leiterseite einen Sprung ihres Vorzeichens. Ihr Umfangsmittel wird abgezogen, damit das Luftspaltfeld keinen unphysikalischen Gleichanteil enthält. Mit Na(φ)=n·Wa(φ) gilt
+
+```math
+\Theta(\varphi)=\sum_a N_a(\varphi)i_a,
+\qquad B(\varphi)=\frac{\mu_0}{\delta}\Theta(\varphi).
+```
+
+Für die verwendete Fourier-Normierung ist Wa,k = Ca,k/π. Die reale Funktion enthält beide konjugierten Frequenzanteile: Wa(φ) = (2/π) Re Σk≥1 Ca,k·exp(jkφ). Bei einer vollgeteilten Einzelspule beträgt die Durchflutung ±ni/2; δ ist der einzelne radiale Luftspalt. Ein zusätzlicher pauschaler Faktor 2 im Luftspalt ist damit nicht erforderlich.
+
+### 3. Flussverkettung und vollständige Matrix
+
+Mit Luftspaltradius r und aktiver Eisenlänge lFe ist ein Flächenelement dA=r·lFe·dφ. Das Einfangen des Feldes durch die empfangende Wicklungsfunktion ergibt
+
+```math
+\Psi_a=r l_{Fe}\int_0^{2\pi}N_a(\varphi)B(\varphi)\,d\varphi
+=\sum_b L_{ab}i_b,
+\qquad
+L_{ab}=\frac{\mu_0r l_{Fe}n^2}{\delta}
+\int_0^{2\pi}W_a(\varphi)W_b(\varphi)\,d\varphi.
+```
+
+Die Diagonale enthält Selbstinduktivitäten, die übrigen Einträge Gegeninduktivitäten. Die Matrix ist symmetrisch und positiv semidefinit; einzelne Gegeninduktivitäten können wegen der Anschluss- und Achsorientierung negativ sein. Die gespeicherte magnetische Energie ist E = ½ iᵀLi ≥ 0. Flussverkettung wird auch bei Strom null aus der Matrix berechnet, ohne durch null zu teilen. Erst bei reiner Grundwellenbetrachtung einer symmetrischen Dreiphasenwicklung folgt M = −L/2; mit allen Raumharmonischen gilt diese Vereinfachung nicht allgemein.
+
+Kontrollwerte für **r=50 mm, lFe=100 mm, δ=1 mm, n=10 Windungen je Spule** (ausdrücklich Beispielgeometrie; sämtliche Spulen eines Strangs in Serie):
+
+| Wicklung | Selbstinduktivität je Strang | Gegeninduktivität je Strangpaar |
+| --- | ---: | ---: |
+| Q12/p1, Einschicht, y6 | 3,289868 mH | −1,315947 mH |
+| Q36/p2, Einschicht, y9 | 7,128048 mH | −2,960881 mH |
+| Q9/p4, Zweischicht, y1 | 1,267208 mH | −0,048739 mH |
+| Q12/p5, Zweischicht, y1 | 1,315947 mH | 0 mH |
+
+Die kleinen bzw. verschwindenden gesamten Gegeninduktivitäten der Zahnspulenbeispiele ergeben sich aus der Addition aller Raumordnungen. Sie bedeuten nicht, dass einzelne gemeinsame Harmonische ungekoppelt sind.
+
+### 4. Fourier-Ableitung und Bezug zu den Folien
+
+Orthogonalität der Umfangsharmonischen (Parseval) führt auf
+
+```math
+L_{ab}=\frac{4\mu_0r l_{Fe}n^2}{\pi\delta}
+\sum_{k=1}^{\infty}\operatorname{Re}
+\left\{C_{a,k}\overline{C_{b,k}}\right\}.
+```
+
+Die App berechnet das stückweise Integral ohne Fourier-Abbruch als Referenz und zeigt daneben die endliche harmonische Summe samt Abweichung. Die Feldrekonstruktion aus endlich vielen Harmonischen kann an den idealisierten Leitersprüngen Gibbs-Schwingungen zeigen.
+
+Für ein Spulenpaar und **eine** räumliche Periode 2τp ist die Folienformel
+
+```math
+L_{SR}=\frac{4\mu_0\tau_p l_{Fe}n_Sn_R}{\pi^2\delta}
+\sum_{\nu\ge1}\xi_{S,\nu}\xi_{R,\nu}\cos(\nu\Delta\theta),
+\qquad \xi_{S,\nu}=\frac{\sin(\nu\pi w_S/(2\tau_p))}{\nu}.
+```
+
+Sie folgt durch Integration des Kosinus über die empfangende Spulenweite: ∫−wS/2..wS/2 cos(νπ(x−xR)/τp) dx = (2τp/(νπ)) sin(νπwS/(2τp)) cos(νπxR/τp). Mit Δθ=πxR/τp und τp=πr/p stimmen die Vorfaktoren für eine Periode überein. Bei p identischen Wiederholungen ist deren Energie über **p Perioden** zu addieren. Die App integriert unmittelbar den gesamten Umfang und setzt keine solche Periodizität für Bruchlochwicklungen voraus. Die Nutzordnung ν in dieser lokalen Folienformel darf nicht mit dem mechanischen k der gesamten Maschine verwechselt werden.
+
+Bei Selbstinduktivität sind Quelle und Empfänger dieselbe Wicklung: Δθ=0, ξS·ξR wird zu ξS². Für eine einzelne bestromte Wicklung, bei sonstigen Strangströmen null, sind im linearen Modell Sekanten- und differentielle Induktivität gleich: L=Ψ/i=dΨ/di. Bei mehreren bestromten Strängen enthält Ψa auch gegenseitige Beiträge; Ψa/ia ist dann im Allgemeinen nicht Laa. Die Matrixdefinition lautet Lab=∂Ψa/∂ib. Unter Sättigung ist diese differentielle Matrix vom Arbeitspunkt abhängig; dafür enthält die App kein Materialmodell.
+
+## Mathematisches Wicklungsmodell
 
 - Drei Stränge mit identischen Windungszahlen und gleichen idealisierten Nutspannungen.
 - Lochzahl **q = Q/(6p)**; elektrischer Nutwinkel **α = 360°p/Q**; Polteilung **τp = Q/(2p)**.
@@ -137,7 +222,7 @@ npm test
 npm run build
 ```
 
-Die Tests prüfen bekannte Referenzwerte, die vollständige und eindeutige Seitenbelegung, korrekte Lagen und Vorzeichen, mechanische Spulenweiten, tatsächliche Vektorsummen, 120°-Symmetrie, Kandidatenauswahl und ungültige Eingaben. Die Oberfläche wurde zusätzlich in Chromium mit allen Beispielen, Filter, Nutauswahl, Exporten und einer mobilen Ansicht geprüft.
+Die Tests prüfen bekannte Referenzwerte, die vollständige und eindeutige Seitenbelegung, korrekte Lagen und Vorzeichen, mechanische Spulenweiten, tatsächliche Vektorsummen, 120°-Symmetrie, Kandidatenauswahl und ungültige Eingaben. Für Induktivitäten werden zusätzlich analytische Spulenmodelle, Reziprozität, Energie, gemeinsame Achsenbezüge und die Konvergenz der Fourier-Summe gegen das stückweise Integral geprüft. Die Oberfläche wird außerdem in Chromium mit allen Beispielen, Filtern, Exporten, mathematischen Formeln, Offline-Betrieb und schmalen Bildschirmbreiten geprüft.
 
 ## Struktur
 
@@ -145,13 +230,17 @@ Die Tests prüfen bekannte Referenzwerte, die vollständige und eindeutige Seite
 src/domain/winding.js       Rechenmodell ohne UI-Abhängigkeiten
 src/domain/windingLayout.js Kanonische Seriennetze und periodische Zeichengeometrie
 src/domain/spectrum.js      Räumliche Fourier-Koeffizienten und Referenzformeln
+src/domain/inductance.js    Gemeinsame Achsen, Wicklungsfunktionen und Luftspaltinduktivitäten
 src/components/Diagrams.jsx SVG-Sterne, Zonenplan und Wickelschema
 src/components/SpectrumPanel.jsx Interaktiver Spektrumsplot und Koeffizienten
+src/components/InductancePanel.jsx Schrittweise Herleitung, Matrix und Feldverlauf
+src/components/MathFormula.jsx Offline gesetzte LaTeX-Formeln als natives MathML
 src/App.jsx                Eingaben, Ergebnisse, Erklärungen und Export
 src/styles.css             Responsive Oberfläche
 tests/winding.test.js       Numerische Referenzen und Modellinvarianten
 tests/winding-layout.test.js Eindeutige Leiterseiten, Seriennetze und Schnittinvarianten
 tests/spectrum.test.js      Fourier-Referenzen, Normierung und Phasenursprung
+tests/inductance.test.js    Analytische Induktivitäten, Reziprozität und Fourier-Konvergenz
 ```
 
 Jede Cloud-Aufgabe läuft bereits in einer isolierten Umgebung. Für weitere Arbeit den vorhandenen Checkout verwenden; ein zusätzlicher Git-Worktree ist nicht nötig.
