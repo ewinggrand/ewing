@@ -12,6 +12,10 @@ Es sind keine Installation und keine Internetverbindung nötig. Alternativ das g
 
 Die direkt ausführbare **[HTML-Datei](downloads/wicklungsatelier.html)** ist ebenfalls enthalten. Auf GitHub wird deren Quelltext angezeigt; zum Ausführen die Datei herunterladen und im eigenen Browser öffnen.
 
+## Native Scilab-Version
+
+Zusätzlich gibt es das **[Wicklungsatelier für Scilab als ZIP](downloads/wicklungsatelier-scilab.zip)**. Das Paket entpacken und in Scilab Desktop über **Datei → Ausführen** die enthaltene `start.sce` öffnen. Die native Version umfasst Wicklungsberechnung, Spannungssterne, Zonung, tatsächliches Wickelschema, Spektrum, Luftspaltinduktivitäten und die mathematische Herleitung in sechs Etappen. CSV, JSON, SVG und ein eigenständiger HTML-Bericht mit gesetzten Formeln stehen als Exporte bereit. Geprüft mit Scilab 2024.1.0; zum Ausführen sind keine ATOMS-Toolbox und kein Node.js nötig. Einzelheiten: **[Scilab-Anleitung](scilab/README.md)**.
+
 ## Starten
 
 Voraussetzung: Node.js 20.19+ oder 22.12+ und npm (in der Cloud mit Node 24 geprüft).
