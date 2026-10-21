@@ -1,4 +1,4 @@
-# Wicklungsatelier für Scilab · Version 1.0
+# Wicklungsatelier für Scilab · Version 1.1
 
 Native Scilab-Anwendung für dreiphasige Statorwicklungen: Nutenspannungsstern, natürliche Zonung, Strangspannungsstern, tatsächliches Wickelschema, Raumharmonische und Luftspaltinduktivität. Die Berechnungen laufen vollständig in Scilab; es wird keine Web-App eingebettet und kein JavaScript-Rechenkern aufgerufen.
 
@@ -30,6 +30,40 @@ Im Hauptfenster stehen links die Wicklung, das Spektrum, die Abwicklung und die 
 - **Herleitung** zeigt die gewählte der sechs mathematischen Etappen als native Scilab-LaTeX-Grafik mit eingesetzten Zahlen. Die ausführlichen Erklärungen sind im Ergebnistext und im HTML-Bericht enthalten. In der Konsole liefert `ew_inductance_derivation(w,d,"A")` die sechs Etappen als kopierbaren Text.
 
 Die Steuerung und die Diagramme sind eigene Fenster. Für große Q oder lange Formeln das Grafikfenster vergrößern. Mehrere Ansichten können gleichzeitig geöffnet bleiben.
+
+### Verknüpfte Spulenauswahl
+
+Strang und Spule im Bedienfenster auswählen oder eine Spule im Wickelschema anklicken. Die Auswahl wird zwischen den geöffneten Ansichten übernommen: tatsächliche Nutseiten einschließlich Lage, Spulenköpfe, zugehörige Spannungszeiger und die orientierte Spulenachse werden gemeinsam hervorgehoben. Die beiden Seiten bleiben auch bei gedrehter Abwicklung dieselben physikalischen Leiter. Eine Auswahl verändert weder die Verschaltung noch das Rechenergebnis.
+
+Bei mehrfach belegten elektrischen Winkeln können mehrere Spulen auf demselben Sternstrahl liegen. Die Spulenliste erlaubt dann eine eindeutige Auswahl einschließlich der tatsächlichen Nut- und Lagenzuordnung. Ein Strangwechsel aktualisiert die Liste und die geöffneten Diagramme.
+
+### Interaktive Lernansicht und Konvergenz
+
+Die Ansicht **Lernpfad** verfolgt die ausgewählte mechanische Raumordnung k in vier Schritten:
+
+1. Die tatsächliche Plus- und Minus-Seite ergeben den vorzeichenbehafteten Spulenspannungszeiger.
+2. Die Beiträge der Spulen werden zur physikalischen Spulengruppe addiert.
+3. Die Gruppen ergeben den vollständigen Strang. Geometrische Faktoren, komplexe Summe und der zusätzliche 1/k-Faktor bleiben unterscheidbar.
+4. Die ungedrehten Strangkoeffizienten liefern den Beitrag dieser Raumharmonischen zur Selbst- bzw. Gegeninduktivität und Flussverkettung.
+
+**Empfangsstrang** a und **Quellenstrang** b bezeichnen Zeile bzw. Spalte von L. Gleiche Stränge zeigen einen Selbstinduktivitätsbeitrag; verschiedene Stränge zeigen eine Gegeninduktivität. Die gesamte Flussverkettung eines Empfängers enthält die Beiträge aller bestromten Stränge. Die Wirkung einer ausgewählten Quelle wird gesondert ausgewiesen.
+
+Spannungszeiger und Fourier-Koeffizienten haben unterschiedliche Konventionen. Die Lernansicht macht die Umrechnung sichtbar:
+
+```text
+U_c,k = exp(+j k φ_plus) − exp(+j k φ_minus)
+C_c,k = conj(U_c,k) / (2 j k)
+C_g,k = Summe der C_c,k in der Gruppe
+C_a,k = Summe der C_g,k im Strang
+Delta L_ab,k = P · Re{C_a,k · conj(C_b,k)}
+P = 4 mu0 r lFe n² / (pi delta)
+```
+
+Die Strangprodukte enthalten Kreuzterme zwischen den Spulen. Die Summe von Einzelspulen-Betragsquadraten allein wäre daher kein korrekter Strang-Induktivitätsbeitrag.
+
+**Konvergenz** stellt die kumulierte Fourier-Summe L(K) dem exakten stückweisen Integral gegenüber und zeigt die relative Abweichung der vollständigen Matrix. Der Konvergenzbereich ist unabhängig von der ausgewählten Raumordnung. Auch eine außerhalb des Bereichs liegende einzelne Ordnung wird berechnet und entsprechend gekennzeichnet. Die Selbstinduktivität nähert sich durch nichtnegative Eigenbeiträge an; Gegeninduktivitäten können oszillieren oder das Vorzeichen wechseln. Bei einer exakt verschwindenden Gegeninduktivität wird kein relativer Fehler durch diesen einzelnen Eintrag dividiert.
+
+Die Lernansicht verwendet immer die tatsächliche Wicklung. Analytische Vergleichsspektren ändern die Maschineninduktivität nicht. Auswahl und Ströme können wechseln, ohne dass dadurch die gespeicherten magnetischen Konvergenzkurven neu berechnet werden müssen.
 
 ## Maschinenwerte und mathematisches Modell
 
@@ -84,6 +118,8 @@ Die Formeln werden mit ihren tatsächlichen Vorzeichen ausgewertet. Einige Balke
 - **SVG:** das zuletzt geöffnete Grafikfenster als skalierbare Vektorgrafik. Für weitere native Scilab-Formate können die Exportfunktionen des Grafikfensters verwendet werden.
 - **HTML-Bericht:** alle sechs Etappen mit gesetzten MathML-Formeln, eingesetzten Zahlen, Spulenachsen, Gruppenbeiträgen sowie exakter, Grundwellen- und Fourier-Matrix. Der Bericht ist eigenständig offline lesbar. In einem aktuellen Browser öffnen und bei Bedarf als PDF drucken.
 
+In Version 1.1 enthalten JSON und HTML zusätzlich die aktuelle Spulenauswahl, die Summenkette der ausgewählten Raumharmonischen, den einzelnen Induktivitätsbeitrag und die Konvergenz. Für Lernansicht und Konvergenz stehen eigene CSV-Daten bereit; alle numerischen Matrixwerte im JSON und diesen CSV-Dateien werden in Henry gespeichert.
+
 ## Ohne Oberfläche rechnen
 
 ```scilab
@@ -107,10 +143,19 @@ ew_export_inductance_csv(d, "induktivitaet.csv");
 ew_export_json(w, s, d, "berechnung.json");
 ew_export_report(w, d, "herleitung.html");
 
+// Ausgewählte Spule A2, Empfang A, Quelle B, mechanische Ordnung4.
+// Die Konvergenz wird unabhängig davon bis Ordnung360 untersucht.
+lesson = ew_compute_learning(w, d, "A2", "A", "B", 4, 360);
+ew_export_learning_csv(lesson, "lernansicht.csv");
+ew_export_convergence_csv(lesson.convergence, "A", "B", "konvergenz.csv");
+ew_export_report(w, d, "ausgewaehlte-herleitung.html", lesson);
+
 // Diese Befehle benötigen die Desktop-/Grafikversion:
 ew_plot_winding(w, "series", 0, "");
 ew_plot_spectrum(s, "real", "A");
 ew_plot_derivation(w, d, 5, "A");
+ew_plot_learning(lesson, 2);
+ew_plot_convergence(lesson.convergence, "A", "B", 4);
 ```
 
 Stränge heißen `"A"`, `"B"`, `"C"`. Sammlungen wie `w.coils`, `w.slotLayers`, `d.phases`, `d.groups` und `s.coefficients` sind native Scilab-Listen mit Strukturen. `d.matrixH` ist eine reelle 3×3-Matrix, Ströme und Flussverkettungen sind Spaltenvektoren in der Reihenfolge A/B/C. Fehlende Achsen werden als nicht definiert behandelt. Ungültige Eingaben liefern verständliche Fehler; eine im festen Konstruktionsmodell nicht realisierbare Kombination liefert `.valid=%f` und keine erfundenen Spulen.
@@ -125,13 +170,15 @@ scilab-cli -nb -f tests/run_tests.sce
 
 Die Suite beendet diesen separaten Scilab-Prozess mit einem eindeutigen Erfolg-/Fehlerstatus. Zum interaktiven Arbeiten stattdessen `loader.sce` bzw. `start.sce` verwenden. Die Referenzdateien liegen bei; zum Ausführen der Tests wird kein Node.js benötigt. `demo.sce` zeigt zusätzlich das Q9/p4-Beispiel.
 
-Das fertige, separat entpackte ZIP wurde mit Scilab 2024.1.0 geprüft: **91 Wicklungsreferenzen, 30 vollständige Layoutvergleiche und 30.192 Assertions**, einschließlich zusätzlicher Induktivitäts- und Exportprüfungen. Die optionale Desktop-Prüfung benötigt die vollständige Grafik-/Java-Laufzeit und einen Bildschirm:
+Die native Rechensuite wurde mit Scilab 2024.1.0 geprüft: **91 Wicklungsreferenzen, 30 vollständige Layoutvergleiche und 34.644 Assertions**, einschließlich zusätzlicher Induktivitäts-, Lernmodell- und Exportprüfungen. Die optionalen Desktop-Prüfungen benötigen die vollständige Grafik-/Java-Laufzeit und einen Bildschirm:
 
 ```sh
 scilab -nw -nb -f tests/gui_smoke.sce
+scilab -nw -nb -f tests/learning_gui_smoke.sce
+scilab -nw -nb -f tests/learning_graphics_smoke.sce
 ```
 
-Sie prüft 64 Bedingungen zu den fünf Ansichten, sechs Herleitungsetappen, Beispielen, Eingaben und Exporten. Das sichtbare Bedienfenster wurde außerdem mit Maus und Tastatur geprüft.
+Die ursprüngliche Desktop-Suite prüft 64 Bedingungen. Hinzu kommen 103 Prüfungen der verknüpften Oberfläche und 1.981 Grafikprüfungen der tatsächlichen Nutlagen, Spulenauswahl, Lernschritte und Konvergenzkurven. Alle sieben Ansichten, sechs Herleitungsetappen und vier Lernschritte werden ausgeführt. Das sichtbare Bedienfenster wird außerdem mit Maus und Tastatur geprüft, einschließlich kurzer und gehaltener Diagrammklicks.
 
 Im vollständigen Git-Repository können Entwickler die unabhängigen Referenzdaten mit `npm run fixtures:scilab` aus dem bestehenden JavaScript-Modell erneuern. `npm run build:scilab` setzt die LaTeX-Formeln als MathML und erstellt das veröffentlichbare ZIP. Diese beiden Erzeugungsschritte brauchen Node/npm; die fertige Scilab-Anwendung und ihr Bericht brauchen es nicht.
 
@@ -142,7 +189,9 @@ demo.sce                   Rechenbeispiel
 macros/winding.sci         Zonung, vollständige Paarung, automatische Weite
 macros/spectrum.sci        Fourier-Koeffizienten und analytische Referenzen
 macros/inductance.sci      Achsen, Faktoren, Durchflutung, Fluss und Matrix
+macros/learning.sci        Spule-Gruppe-Strang, einzelne Harmonische und Konvergenz
 macros/graphics.sci        Native Diagramme und periodische Layoutgeometrie
+macros/learning_graphics.sci Verknüpfte Auswahl und interaktive Lernansichten
 macros/gui.sci             Steuerelemente, Beispiele, Ansichten und Ergebnistext
 macros/export.sci          CSV, JSON, SVG, HTML und gesetzte Herleitung
 resources/equations.tsv   Gebündelte LaTeX-/MathML-Formeln

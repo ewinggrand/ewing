@@ -50,11 +50,13 @@ try
     exec(testDirectory + "../macros/winding.sci", -1);
     exec(testDirectory + "../macros/spectrum.sci", -1);
     exec(testDirectory + "../macros/inductance.sci", -1);
+    exec(testDirectory + "../macros/learning.sci", -1);
     exec(testDirectory + "../macros/graphics.sci", -1);
     exec(testDirectory + "reference-fixtures.sce", -1);
     exec(testDirectory + "layout_reference_fixtures.sci", -1);
     exec(testDirectory + "layout_tests.sci", -1);
     exec(testDirectory + "inductance_tests.sci", -1);
+    exec(testDirectory + "learning_tests.sci", -1);
     global EW_TEST_ASSERTIONS;
     EW_TEST_ASSERTIONS = 0;
     phaseNames = ["A" "B" "C"];
@@ -185,6 +187,8 @@ try
     layoutCases = ew_test_layout();
     independentInductanceChecks = ew_test_inductance();
     EW_TEST_ASSERTIONS = EW_TEST_ASSERTIONS + independentInductanceChecks;
+    learningChecks = ew_test_learning();
+    EW_TEST_ASSERTIONS = EW_TEST_ASSERTIONS + learningChecks;
     global EW_SCILAB_ROOT;
     EW_SCILAB_ROOT = testDirectory + "../";
     exec(testDirectory + "../macros/export.sci", -1);

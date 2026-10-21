@@ -137,7 +137,7 @@ endfunction
 
 function ew_export_csv(w, path, settings)
     if argn(2) < 3 then settings = struct("startSlot", 0, "connectionMode", "series"); end
-    rows = ["Wicklungsatelier Scilab;Version;1.0"; ..
+    rows = ["Wicklungsatelier Scilab;Version;1.1"; ..
         "Q;p;Schichten;y;q;kw1"; ..
         strcat([string(w.slots),string(w.polePairs),string(w.layers),ew_number(w.coilSpan),ew_number(w.q),ew_number(w.metrics.kw)], ";"); ..
         ""; "Nut;Lage;Strang;Vorzeichen;Elektrischer Winkel Grad"];
@@ -189,10 +189,26 @@ function ew_export_inductance_csv(d, path)
     mputl(rows, path);
 endfunction
 
-function ew_export_json(w, s, d, path, settings)
+function learning = ew_export_learning_context(w, d, settings)
+    learning = struct("valid", %f, "warnings", "Keine vollständige Induktivitätsberechnung vorhanden.");
+    if ~w.valid | ~d.valid then return; end
+    phase = "A"; sourcePhase = "A"; coilId = "";
+    order = d.parameters.selectedOrder; limit = d.parameters.maxOrder;
+    if isfield(settings,"phase") then phase = settings.phase; end
+    if isfield(settings,"sourcePhase") then sourcePhase = settings.sourcePhase; end
+    if isfield(settings,"coilId") then coilId = settings.coilId; end
+    if isfield(settings,"selectedOrder") then order = settings.selectedOrder; end
+    if isfield(settings,"convergenceOrder") then limit = settings.convergenceOrder; end
+    learning = ew_compute_learning(w,d,coilId,phase,sourcePhase,order,limit);
+endfunction
+
+function ew_export_json(w, s, d, path, settings, learning)
     if argn(2) < 5 then settings = struct("startSlot", 0, "connectionMode", "series"); end
-    payload = struct("edition", "Scilab", "version", "1.0", "winding", w, "spectrum", s, "inductance", d);
+    if argn(2) < 6 then learning = ew_export_learning_context(w,d,settings); end
+    payload = struct("edition", "Scilab", "version", "1.1", "winding", w, "spectrum", s, "inductance", d);
     payload.settings = settings;
+    payload.learning = learning;
+    if learning.valid then payload.convergence = learning.convergence; end
     if w.valid then payload.windingLayout = ew_build_winding_layout(w, settings.connectionMode, settings.startSlot); end
     mputl(toJSON(payload), path);
 endfunction
@@ -213,8 +229,9 @@ function html = ew_html_matrix(matrix, label)
     html = html + "</table></div>";
 endfunction
 
-function ew_export_report(w, d, path)
+function ew_export_report(w, d, path, learning)
     if ~w.valid | ~d.valid then error("Für den Bericht ist eine vollständige gültige Wicklung nötig."); end
+    if argn(2) < 4 then learning = ew_export_learning_context(w,d,struct()); end
     html = ["<!doctype html><html lang=""de""><head><meta charset=""utf-8""><meta name=""viewport"" content=""width=device-width,initial-scale=1""><title>Wicklungsatelier – mathematische Herleitung</title>"; ..
         "<style>body{font:16px/1.8 system-ui,sans-serif;color:#344132;background:#f5f6ed;margin:0}main{max-width:1080px;margin:32px auto;padding:0 20px}section{background:#fffefa;border:1px solid #dce1d1;border-radius:8px;padding:24px;margin:22px 0}h1,h2,h3{line-height:1.4}h1{font-size:28px}h2{font-size:22px}h3{font-size:17px}table{border-collapse:collapse;width:100%;font-size:14px}th,td{padding:9px;border:1px solid #e1e6d7;text-align:right}th:first-child,td:first-child{text-align:left}.formula{overflow-x:auto;padding:15px;background:#f3f5eb;border-radius:6px;margin:16px 0;font-size:18px}.values{background:#faf3e8;padding:16px;overflow-wrap:anywhere}.scroll{overflow:auto}pre{white-space:pre-wrap}nav a{margin-right:16px;color:#a95736}small{color:#748268}@media print{body{background:white}section{break-inside:avoid}nav{display:none}main{margin:0;max-width:none}}</style></head><body><main>"; ..
         "<h1>Wicklungsatelier für Scilab: mathematische Herleitung</h1>"; ..
@@ -258,8 +275,130 @@ function ew_export_report(w, d, path)
             html($+1) = ew_html_matrix(d.fundamentalMatrixH, "Nur Nutzgrundwelle k=p");
             html($+1) = ew_html_matrix(d.harmonicMatrixH, "Fourier-Summe bis K="+string(d.parameters.maxOrder));
         end
+        if learning.valid then html = [html; ew_learning_html_stage(w,d,learning,stage)]; end
         html($+1) = "</section>";
     end
-    html = [html; "<p><small>Scilab-Edition 1.0 · Formeln als natives MathML · vollständig offline lesbar. Zum PDF-Ausdruck die Druckfunktion des Browsers verwenden.</small></p></main></body></html>"];
+    html = [html; "<p><small>Scilab-Edition 1.1 · Formeln als natives MathML · vollständig offline lesbar. Zum PDF-Ausdruck die Druckfunktion des Browsers verwenden.</small></p></main></body></html>"];
     mputl(html, path);
+endfunction
+
+function rows = ew_learning_formula_rows(keys)
+    rows = emptystr(0,1);
+    for k = 1:size(keys,"*")
+        [unused, mathml] = ew_formula(keys(k));
+        rows($+1) = "<div class=""formula"">"+mathml+"</div>";
+    end
+endfunction
+
+function rows = ew_learning_html_stage(w,d,learning,stage)
+    rows = emptystr(0,1);
+    names = ["A","B","C"];
+    a = find(names == learning.phase); b = find(names == learning.sourcePhase);
+    select stage
+    case 1 then
+        c = learning.coil;
+        rows = ["<h3>Verknüpfte Auswahl: Spule "+ew_html_escape(c.id)+"</h3>"; ..
+            "<div class=""values"" data-learning-coil="""+ew_html_escape(c.id)+""">Empfangsstrang "+learning.phase+", Quellenstrang "+learning.sourcePhase+", mechanische Raumordnung k="+string(learning.order)+". Dieselbe Spule wird im Wickelschema, den Spannungssternen und der Achsenansicht hervorgehoben.</div>"; ..
+            "<p>Die tatsächlichen Seiten behalten ihre Nut und Lage. Spannungszeiger verwenden +j im Exponenten; die ungedrehten Fourier-Koeffizienten verwenden −j. Die Konjugation und die Division durch 2jk sind notwendig.</p>"; ..
+            ew_learning_formula_rows("learning-voltage"); ..
+            "<div class=""scroll""><table><tr><th>Seite</th><th>Nut</th><th>Lage</th><th>Vorzeichenbehafteter Spannungszeiger bei k</th></tr>" ];
+        slots = [c.positiveSlot,c.negativeSlot]; layers = [c.positiveLayer,c.negativeLayer]; signs = [1,-1]; labels = ["Plus","Minus"];
+        for j = 1:2
+            value = signs(j)*exp(%i*learning.order*2*%pi*(slots(j)-1)/w.slots);
+            rows($+1) = "<tr><td>"+labels(j)+"</td><td>"+string(slots(j))+"</td><td>"+string(layers(j))+"</td><td>"+ew_complex_text(ew_i_complex(value))+"</td></tr>";
+        end
+        rows($+1) = "</table></div>";
+    case 2 then
+        rows = ["<h3>Nachvollziehbare Summenkette bei k="+string(learning.order)+"</h3>"; ..
+            ew_learning_formula_rows("learning-chain"); ..
+            "<p>Die ausgewählte Spule gehört zu einer tatsächlichen Spulengruppe. Die Tabelle stellt deren Beiträge und den vollständigen Empfangsstrang im gemeinsamen mechanischen Bezug gegenüber. Einheiten: normierte Spannungszeiger und dimensionslose Fourier-Koeffizienten.</p>"; ..
+            "<div class=""scroll""><table><tr><th>Summe</th><th>Spulen</th><th>Spannungszeiger U bei k</th><th>Raw-Fourier C bei k</th></tr>" ];
+        nodes = list(learning.coilContribution,learning.groupContribution,learning.phaseContribution);
+        labels = ["Ausgewählte Spule","Ihre Gruppe","Vollständiger Strang "+learning.phase];
+        for j = 1:3
+            node = nodes(j);
+            rows($+1) = "<tr><td>"+labels(j)+"</td><td>"+ew_html_escape(strcat(node.coilIds,", "))+"</td><td>"+ew_complex_text(node.voltageHarmonic)+"</td><td>"+ew_complex_text(node.rawFourier)+"</td></tr>";
+        end
+        rows($+1) = "</table></div>";
+    case 5 then
+        rows = ["<h3>Beitrag einer einzelnen Raumharmonischen</h3>"; ..
+            ew_learning_formula_rows(["learning-inductance","learning-cross-terms"]); ..
+            "<p>Der Induktivitätsbeitrag verwendet die vollständigen Strangsummen, einschließlich der Kreuzterme zwischen den Spulen. Die Auswahl einer einzelnen Spule verändert weder die physikalische Verschaltung noch die gesamte Induktivität.</p>"; ..
+            "<div class=""values"">ΔL_"+learning.phase+learning.sourcePhase+",k = "+ew_number(learning.selectedContributionH*1000)+" mH bei k="+string(learning.order)+". Exaktes L_"+learning.phase+learning.sourcePhase+" = "+ew_number(learning.exactSelectedH*1000)+" mH.</div>"; ..
+            ew_learning_formula_rows("learning-convergence"); ..
+            "<p>Die Selbstinduktivität nähert sich durch nichtnegative Eigenbeiträge dem exakten Integral. Gegeninduktivitäten können oszillieren und ihr Vorzeichen wechseln. Die angegebene relative Abweichung bezieht sich auf die vollständige Matrix; auch bei exakt verschwindender Gegeninduktivität bleibt sie definiert.</p>"; ..
+            ew_learning_html_convergence(learning.convergence,learning.phase,learning.sourcePhase,learning.order) ];
+    case 6 then
+        pairFlux = learning.selectedContributionH*d.parameters.currents(b);
+        rows = ["<h3>Flussverkettung der ausgewählten Raumharmonischen</h3>"; ..
+            ew_learning_formula_rows("learning-flux"); ..
+            "<p>Aus der Quelle "+learning.sourcePhase+" allein: ΔL_"+learning.phase+learning.sourcePhase+",k · i_"+learning.sourcePhase+" = "+ew_number(pairFlux*1000)+" mWb. Mit allen drei eingestellten Strangströmen zusammen: Ψ_"+learning.phase+",k = "+ew_number(learning.harmonicFluxLinkageWbTurns(a)*1000)+" mWb.</p>" ];
+    end
+endfunction
+
+function rows = ew_learning_html_convergence(conv,phase,sourcePhase,selectedOrder)
+    names = ["A","B","C"]; a = find(names==phase); b = find(names==sourcePhase);
+    count = size(conv.orders,"*");
+    values = zeros(count,1);
+    for j = 1:count, matrix = conv.partialMatricesH(j); values(j) = matrix(a,b)*1000; end
+    exact = conv.exactMatrixH(a,b)*1000;
+    low = min([values;exact]); high = max([values;exact]);
+    spread = high-low;
+    if spread < 1d-15 then spread = max([abs(exact)*0.1;1d-6]); end
+    low = low-0.08*spread; high = high+0.08*spread;
+    points = emptystr(1,count);
+    for j = 1:count
+        px = 70+800*(j-1)/max(1,count-1); py = 260-220*(values(j)-low)/(high-low);
+        points(j) = msprintf("%.4f,%.4f",px,py);
+    end
+    yExact = 260-220*(exact-low)/(high-low);
+    rows = ["<div class=""scroll""><svg xmlns=""http://www.w3.org/2000/svg"" viewBox=""0 0 920 320"" role=""img"" aria-label=""Konvergenz L_"+phase+sourcePhase+""" style=""width:100%;min-width:500px;background:#f8f9f1""><text x=""70"" y=""20"" font-size=""15"" fill=""#344132"">L_"+phase+sourcePhase+" in mH: Fourier-Summe und exaktes Integral</text>"; ..
+        msprintf("<line x1=""70"" x2=""870"" y1=""%.4f"" y2=""%.4f"" stroke=""#31806d"" stroke-dasharray=""7 4""/>",yExact,yExact); ..
+        "<polyline fill=""none"" stroke=""#c65736"" stroke-width=""2"" points="""+strcat(points," ")+"""/><path d=""M70 35 V260 H870"" fill=""none"" stroke=""#7b8970""/>"; ..
+        "<text x=""64"" y=""44"" text-anchor=""end"" font-size=""11"">"+msprintf("%.4g",high)+"</text><text x=""64"" y=""263"" text-anchor=""end"" font-size=""11"">"+msprintf("%.4g",low)+"</text>"; ..
+        "<text x=""70"" y=""283"" font-size=""12"">K=1</text><text x=""800"" y=""283"" font-size=""12"">K="+string(count)+"</text><text x=""70"" y=""307"" font-size=""12"">Grün gestrichelt: exakt "+ew_number(exact)+" mH; rot: L(K)</text></svg></div>" ];
+    if selectedOrder > count then rows($+1) = "<p>Die ausgewählte Ordnung k="+string(selectedOrder)+" liegt außerhalb des Konvergenzbereichs K≤"+string(count)+". Ihr Einzelbeitrag wird trotzdem gesondert berechnet.</p>"; end
+    orders = unique([1,min(count,20),min(count,60),min(count,120),min(count,360),count]);
+    rows($+1) = "<div class=""scroll""><table><tr><th>K</th><th>L_"+phase+sourcePhase+"(K) / mH</th><th>Matrixabweichung / %</th></tr>";
+    for k = orders
+        rows($+1) = "<tr><td>"+string(k)+"</td><td>"+ew_number(values(k))+"</td><td>"+ew_number(conv.relativeError(k)*100)+"</td></tr>";
+    end
+    rows($+1) = "</table></div>";
+endfunction
+
+function text = ew_learning_csv_number(value)
+    if isnan(value) | isinf(value) then text = "nicht definiert"; else text = msprintf("%.16g",value); end
+endfunction
+
+function ew_export_learning_csv(learning,path)
+    if ~learning.valid then error("Keine gültige Lernansicht vorhanden."); end
+    rows = ["Wicklungsatelier Scilab;Version;1.1"; ..
+        "Spule;Empfangsstrang;Quellenstrang;Raumordnung k"; ..
+        strcat([learning.coilId,learning.phase,learning.sourcePhase,string(learning.order)],";"); ..
+        ""; "Summe;Spulenzahl;U Real;U Imaginaer;C Raw Real;C Raw Imaginaer"];
+    nodes = list(learning.coilContribution,learning.groupContribution,learning.phaseContribution,learning.sourceContribution);
+    labels = ["Spule","Gruppe","Empfangsstrang","Quellenstrang"];
+    for j = 1:4
+        n = nodes(j);
+        rows($+1) = strcat([labels(j),string(n.coilCount),ew_learning_csv_number(n.voltageHarmonic.real),ew_learning_csv_number(n.voltageHarmonic.imag),ew_learning_csv_number(n.rawFourier.real),ew_learning_csv_number(n.rawFourier.imag)],";");
+    end
+    names = ["A","B","C"]; phaseIndex = find(names==learning.phase);
+    rows = [rows; ""; "Harmonischer Induktivitaetsbeitrag / H;"+ew_learning_csv_number(learning.selectedContributionH); ..
+        "Exakter gesamter Matrixeintrag / H;"+ew_learning_csv_number(learning.exactSelectedH); ..
+        "Harmonische Flussverkettung gewaehlte Quelle / Wb;"+ew_learning_csv_number(learning.selectedFluxLinkageWbTurns); ..
+        "Harmonische Flussverkettung alle Stroeme / Wb;"+ew_learning_csv_number(learning.harmonicFluxLinkageWbTurns(phaseIndex))];
+    mputl(rows,path);
+endfunction
+
+function ew_export_convergence_csv(conv,phase,sourcePhase,path)
+    if ~conv.valid then error("Keine gültige Konvergenzberechnung vorhanden."); end
+    names = ["A","B","C"]; a = find(names==phase); b = find(names==sourcePhase);
+    if isempty(a) | isempty(b) then error("Stränge müssen A, B oder C sein."); end
+    rows = ["Wicklungsatelier Scilab;Konvergenz;Empfang;"+phase+";Quelle;"+sourcePhase; ..
+        "K;L(K) / H;Exakter Matrixeintrag / H;Relative Matrixabweichung;Delta L dieser Ordnung / H"];
+    for k = 1:size(conv.orders,"*")
+        matrix = conv.partialMatricesH(k); contribution = conv.contributions(k);
+        rows($+1) = strcat([string(k),ew_learning_csv_number(matrix(a,b)),ew_learning_csv_number(conv.exactMatrixH(a,b)),ew_learning_csv_number(conv.relativeError(k)),ew_learning_csv_number(contribution(a,b))],";");
+    end
+    mputl(rows,path);
 endfunction

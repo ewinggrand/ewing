@@ -136,21 +136,41 @@ function ew_gui()
     c.stage = ew_gui_popup(fig, ["1: Spulenachsen"; "2: Wicklungsfaktoren"; "3: Durchflutung / B"; "4: Flussverkettung"; "5: Induktivitäten"; "6: Ströme / Energie"], 1, [0.55 0.683 0.18 0.035], "ew-stage");
     c.selectedOrder = ew_gui_edit(fig, "1", [0.75 0.683 0.10 0.035], "ew-selected-order", "Mechanische Ordnung; Grundwelle k=p");
     c.coil = ew_gui_popup(fig, ["A1"], 1, [0.862 0.683 0.118 0.035], "ew-selected-coil");
+    ew_gui_label(fig, "Interaktiver Lernpfad", [0.35 0.656 0.25 0.022], 9);
+    ew_gui_label(fig, "Lernschritt", [0.604 0.656 0.18 0.022], 9);
+    ew_gui_label(fig, "Quelle", [0.797 0.656 0.083 0.022], 9);
+    ew_gui_label(fig, "K-Konv.", [0.892 0.656 0.088 0.022], 9);
+    ew_gui_button(fig, "Lernpfad", "ew_gui_learning();", [0.35 0.617 0.115 0.035]);
+    ew_gui_button(fig, "Konvergenz", "ew_gui_convergence();", [0.477 0.617 0.115 0.035]);
+    c.learningStage = ew_gui_popup(fig, ["1: Spule"; "2: Gruppe"; "3: Strang"; "4: Induktivität"], 1, [0.604 0.617 0.18 0.035], "ew-learning-stage");
+    c.sourcePhase = ew_gui_popup(fig, ["A"; "B"; "C"], 1, [0.797 0.617 0.083 0.035], "ew-source-phase");
+    c.sourcePhase.tooltipstring = "Erregender Strang; der Strang links ist die Empfangswicklung";
+    c.convergenceOrder = ew_gui_popup(fig, ["20"; "60"; "120"; "360"; "1200"], 3, [0.892 0.617 0.088 0.035], "ew-convergence-order");
+    c.convergenceOrder.tooltipstring = "Unabhängige höchste Ordnung des Konvergenzdiagramms";
     c.report = uicontrol(fig, "style", "edit", "units", "normalized", ..
-        "position", [0.35 0.205 0.63 0.455], "string", "Berechnung wird vorbereitet ...", ..
+        "position", [0.35 0.205 0.63 0.395], "string", "Berechnung wird vorbereitet ...", ..
         "min", 0, "max", 1000, "horizontalalignment", "left", "fontsize", 11, ..
         "fontname", "monospaced", "backgroundcolor", [1 1 0.99], ..
         "foregroundcolor", [0.23 0.29 0.20], "tag", "ew-report");
-    ew_gui_label(fig, "Ansicht anklicken: Diagramme öffnen in einem eigenen Scilab-Fenster. Text ist kopierbar.", [0.35 0.166 0.63 0.032], 9);
+    ew_gui_label(fig, "Spule wählen oder im Diagramm anklicken: alle offenen Ansichten folgen derselben Auswahl.", [0.35 0.166 0.63 0.032], 9);
     c.exportCsv = ew_gui_button(fig, "Nutbelegung CSV", "ew_gui_save_csv();", [0.35 0.110 0.145 0.040]);
     ew_gui_button(fig, "Berechnung JSON", "ew_gui_save_json();", [0.511 0.110 0.145 0.040]);
     ew_gui_button(fig, "Diagramm SVG", "ew_gui_save_svg();", [0.672 0.110 0.145 0.040]);
     ew_gui_button(fig, "Herleitung HTML", "ew_gui_save_report();", [0.833 0.110 0.147 0.040]);
     ew_gui_label(fig, "Modell: gleiche Windungszahlen, ideal magnetisch leitendes Eisen, dünner gleichmäßiger Luftspalt.", [0.35 0.068 0.63 0.030], 9);
     c.status = ew_gui_label(fig, "Bereit.", [0.02 0.012 0.96 0.035], 10);
+    callbacks = ["phase"; "coil"; "selectedOrder"; "stage"; "learningStage"; "sourcePhase"; "convergenceOrder"; "maxOrder"; "source"; "normalization"; "display"; "polarity"; "connectionMode"];
+    for callbackIndex = 1:size(callbacks, "*")
+        control = c(callbacks(callbackIndex));
+        control.callback = "ew_gui_selection_changed();";
+    end
+    c.windingPhase.callback = "ew_gui_filter_changed();";
+    c.startSlot.callback = "ew_gui_selection_changed();";
     ew_app = struct("figure", fig, "controls", c, "plotFigures", struct(), ..
         "lastFigure", [], "view", "analyse", "settings", struct(), ..
-        "winding", struct(), "spectrum", struct(), "inductance", struct());
+        "winding", struct(), "spectrum", struct(), "inductance", struct(), ..
+        "selection", struct(), "learning", struct("valid", %f), "convergence", struct(), ..
+        "eventBusy", %f, "windingComputations", 0, "inductanceComputations", 0);
     fig.visible = "on";
     show_window(fig);
     ew_gui_calculate(%f);
@@ -175,7 +195,10 @@ function settings = ew_gui_read_settings()
         "startSlot", ew_gui_number(c.startSlot, "Umfangsschnitt"), ..
         "windingPhase", filters(c.windingPhase.value), "stage", c.stage.value, ..
         "selectedOrder", ew_gui_number(c.selectedOrder, "Raumordnung k"), ..
-        "polarity", 1 - 2 * c.polarity.value, "coilId", "");
+        "polarity", 1 - 2 * c.polarity.value, "coilId", "", ..
+        "learningStage", c.learningStage.value, "sourcePhase", phases(c.sourcePhase.value));
+    convergenceOrders = [20; 60; 120; 360; 1200];
+    settings.convergenceOrder = convergenceOrders(c.convergenceOrder.value);
     if settings.startSlot <> floor(settings.startSlot) | settings.startSlot < 0 | settings.startSlot > settings.slots then
         error("Der Umfangsschnitt muss 0 oder eine Nutnummer von 1 bis Q sein.");
     end
@@ -216,29 +239,59 @@ function spectrum = ew_gui_spectrum_polarity(spectrum, polarity)
     end
 endfunction
 
+// Cache only actual model inputs; changing a coil or view does not rerun the
+// winding construction, field reconstruction or convergence summation.
+function same = ew_gui_same_fields(previous, current, fields)
+    same = %t;
+    if typeof(previous) <> "st" then same = %f; return; end
+    for k = 1:size(fields, "*")
+        name = fields(k);
+        if ~isfield(previous, name) then same = %f; return; end
+        if ~isequal(previous(name), current(name)) then same = %f; return; end
+    end
+endfunction
+
 function success = ew_gui_calculate(drawFigures)
     global ew_app;
     if argn(2) < 1 then drawFigures = %f; end
     success = %f;
     try
         settings = ew_gui_read_settings();
-        winding = ew_compute_winding(settings.slots, settings.polePairs, settings.layers, settings.coilSpan);
-        if settings.source == "actual" then
-            spectrum = ew_compute_spectrum(winding, settings.maxOrder, settings.phase, settings.normalization);
+        previous = ew_app.settings;
+        sameWinding = ew_gui_same_fields(previous, settings, ["slots"; "polePairs"; "layers"; "coilSpan"]);
+        if sameWinding then
+            winding = ew_app.winding;
         else
-            spectrum = ew_reference_spectrum(settings.source, settings.maxOrder);
+            winding = ew_compute_winding(settings.slots, settings.polePairs, settings.layers, settings.coilSpan);
+            ew_app.windingComputations = ew_app.windingComputations + 1;
         end
-        spectrum = ew_gui_spectrum_polarity(spectrum, settings.polarity);
-        try
-            inductance = ew_compute_inductance(winding, settings.parameters);
-        catch
-            // A bad magnetic dimension does not invalidate the independent
-            // winding and Fourier calculation. Never retain old L values.
-            inductance = struct("valid", %f, "parameters", settings.parameters, ..
-                "warnings", lasterror(), "matrixH", [], "harmonicMatrixH", [], ..
-                "fundamentalMatrixH", [], "fluxLinkagesWbTurns", [], "energyJ", [], ..
-                "coils", list(), "phases", list(), "groups", list(), ..
-                "segments", list(), "samples", list(), "harmonics", list());
+        sameSpectrum = sameWinding & ew_gui_same_fields(previous, settings, ["source"; "maxOrder"; "phase"; "normalization"; "polarity"]);
+        if sameSpectrum then
+            spectrum = ew_app.spectrum;
+        else
+            if settings.source == "actual" then
+                spectrum = ew_compute_spectrum(winding, settings.maxOrder, settings.phase, settings.normalization);
+            else
+                spectrum = ew_reference_spectrum(settings.source, settings.maxOrder);
+            end
+            spectrum = ew_gui_spectrum_polarity(spectrum, settings.polarity);
+        end
+        sameInductance = sameWinding & ew_gui_same_fields(previous, settings, "parameters");
+        if sameInductance then
+            inductance = ew_app.inductance;
+        else
+            try
+                inductance = ew_compute_inductance(winding, settings.parameters);
+            catch
+                // Invalid magnetic dimensions never retain old L values, while
+                // the actual physical coil selection remains available.
+                inductance = struct("valid", %f, "parameters", settings.parameters, ..
+                    "warnings", lasterror(), "matrixH", [], "harmonicMatrixH", [], ..
+                    "fundamentalMatrixH", [], "fluxLinkagesWbTurns", [], "energyJ", [], ..
+                    "coils", list(), "phases", list(), "groups", list(), ..
+                    "segments", list(), "samples", list(), "harmonics", list());
+            end
+            ew_app.inductanceComputations = ew_app.inductanceComputations + 1;
         end
         coilNames = emptystr(0, 1);
         for index = 1:length(winding.coils)
@@ -251,34 +304,86 @@ function success = ew_gui_calculate(drawFigures)
         ew_app.controls.coil.string = coilNames;
         ew_app.controls.coil.value = selected;
         settings.coilId = coilNames(selected);
+        // A stale off-phase filter may not hide the centrally selected coil.
+        if settings.windingPhase <> "" & settings.windingPhase <> settings.phase then
+            settings.windingPhase = settings.phase;
+            ew_app.controls.windingPhase.value = find(["A";"B";"C"] == settings.phase) + 1;
+        end
+        ew_app.selection = struct("coilId", settings.coilId, "phase", settings.phase, ..
+            "selectedOrder", settings.selectedOrder, "order", settings.selectedOrder);
+        learning = struct("valid", %f, "warnings", "Für den Lernpfad werden eine gültige Wicklung und Magnetgeometrie benötigt.");
+        if winding.valid & inductance.valid & exists("ew_compute_learning") == 1 then
+            learning = ew_compute_learning(winding, inductance, settings.coilId, settings.phase, ..
+                settings.sourcePhase, settings.selectedOrder, settings.convergenceOrder, ew_app.convergence);
+            if learning.valid then ew_app.convergence = learning.convergence; end
+        else
+            ew_app.convergence = struct();
+        end
         ew_app.settings = settings;
         ew_app.winding = winding;
         ew_app.spectrum = spectrum;
         ew_app.inductance = inductance;
-        ew_app.controls.report.string = ew_gui_report(winding, spectrum, inductance, settings, ew_app.view);
-        select ew_app.view
-        case "spektrum" then ew_app.controls.exportCsv.string = "Spektrum CSV";
-        case "induktivitaet" then ew_app.controls.exportCsv.string = "Induktivität CSV";
-        else ew_app.controls.exportCsv.string = "Nutbelegung CSV";
-        end
+        ew_app.learning = learning;
+        ew_gui_update_report();
         if winding.valid then
-            ew_app.controls.status.string = msprintf("Berechnet: Q=%d, p=%d, %d Lagen, y=%d. Geometrie und Ströme sind einstellbare Beispielwerte.", winding.slots, winding.polePairs, winding.layers, winding.coilSpan);
+            ew_app.controls.status.string = msprintf("Q=%d, p=%d, y=%d | Auswahl %s | k=%d | offene Ansichten sind verknüpft.", ..
+                winding.slots, winding.polePairs, winding.coilSpan, settings.coilId, settings.selectedOrder);
         else
             ew_app.controls.status.string = "Zonung berechnet; keine vollständige Wicklung im untersuchten Modell. Hinweise im Protokoll.";
         end
         if winding.valid & ~inductance.valid then
             ew_app.controls.status.string = ew_app.controls.status.string + " Induktivität: Geometrieparameter prüfen.";
         end
-        if drawFigures then ew_gui_draw(); end
+        linkedFields = ["phase";"coilId";"selectedOrder";"sourcePhase";"convergenceOrder"; ..
+            "source";"maxOrder";"normalization";"polarity";"display";"connectionMode";"startSlot";"windingPhase"];
+        linkedChanged = ~sameWinding | ~sameInductance | ~ew_gui_same_fields(previous,settings,linkedFields);
+        if linkedChanged then
+            ew_gui_refresh_views(drawFigures);
+        else
+            // Opening a view or changing a lesson stage does not repaint
+            // unrelated windows whose selection and data are unchanged.
+            if ~ew_gui_same_fields(previous,settings,"stage") then
+                if isfield(ew_app.plotFigures,"herleitung") then
+                    if ew_gui_figure_alive(ew_app.plotFigures.herleitung) then ew_gui_draw("herleitung",%f); end
+                end
+            end
+            if ~ew_gui_same_fields(previous,settings,"learningStage") then
+                if isfield(ew_app.plotFigures,"lernen") then
+                    if ew_gui_figure_alive(ew_app.plotFigures.lernen) then ew_gui_draw("lernen",%f); end
+                end
+            end
+            if drawFigures then ew_gui_draw(ew_app.view,%t); end
+        end
         success = %t;
     catch
         message = lasterror();
         ew_app.controls.status.string = "Eingabe oder Berechnung prüfen: " + message;
-        ew_app.controls.report.string = ["Berechnung nicht verfügbar"; ""; message; ""; "Bitte die markierten Parameter prüfen und erneut berechnen."];
+        ew_app.controls.report.string = ["Berechnung nicht verfügbar"; ""; message; ""; "Bitte die Parameter prüfen und erneut berechnen."];
     end
 endfunction
 
-function lines = ew_gui_report(w, s, ind, settings, view)
+function ew_gui_update_report()
+    global ew_app;
+    settings = ew_app.settings;
+    lines = ew_gui_report(ew_app.winding, ew_app.spectrum, ew_app.inductance, settings, ew_app.view, ew_app.learning);
+    if ew_app.winding.valid then
+        selected = ["GEMEINSAME AUSWAHL: " + settings.coilId + " / Strang " + settings.phase + ..
+            " / mechanische Raumordnung k=" + string(settings.selectedOrder); ..
+            "Quelle für L_ab,k: " + settings.sourcePhase + "; Empfang: " + settings.phase; ""];
+        lines = [selected; lines];
+    end
+    ew_app.controls.report.string = lines;
+    select ew_app.view
+    case "spektrum" then ew_app.controls.exportCsv.string = "Spektrum CSV";
+    case "induktivitaet" then ew_app.controls.exportCsv.string = "Induktivität CSV";
+    case "lernen" then ew_app.controls.exportCsv.string = "Lernpfad CSV";
+    case "konvergenz" then ew_app.controls.exportCsv.string = "Konvergenz CSV";
+    else ew_app.controls.exportCsv.string = "Nutbelegung CSV";
+    end
+endfunction
+
+function lines = ew_gui_report(w, s, ind, settings, view, learning)
+    if argn(2) < 6 then learning = struct("valid", %f, "warnings", "Lerndaten nicht verfügbar."); end
     lines = ["WICKLUNGSATELIER / SCILAB"; ..
         msprintf("Q = %d Nuten    p = %d Polpaare    Lagen = %d", w.slots, w.polePairs, w.layers); ..
         msprintf("q = Q/(6p) = %.6g    elektrischer Nutwinkel = %.6g Grad", w.q, w.alphaDeg); ""];
@@ -299,6 +404,9 @@ function lines = ew_gui_report(w, s, ind, settings, view)
         "Spulenseiten liegen in den Nuten ZWISCHEN den blauen Zähnen."; ""];
     if view == "herleitung" then
         lines = [lines; ew_inductance_derivation(w, ind, settings.phase)]; return;
+    end
+    if view == "lernen" | view == "konvergenz" then
+        lines = [lines; ew_gui_learning_report(learning, settings, view)]; return;
     end
     select view
     case "spektrum" then
@@ -369,6 +477,63 @@ function lines = ew_gui_report(w, s, ind, settings, view)
     if size(w.warnings, "*") > 0 then lines = [lines; ""; w.warnings(:)]; end
 endfunction
 
+function lines = ew_gui_learning_report(data, settings, view)
+    if ~data.valid then
+        lines = ["Lernpfad / Konvergenz nicht verfügbar."; data.warnings(:)]; return;
+    end
+    a = find(["A";"B";"C"] == settings.phase);
+    b = find(["A";"B";"C"] == settings.sourcePhase);
+    coil = data.coil;
+    lines = ["INTERAKTIVER LERNPFAD: SPULE -> GRUPPE -> STRANG -> L_ab,k"; ..
+        msprintf("Spule %s: Plus Nut %d / Lage %d, Minus Nut %d / Lage %d", ..
+            coil.id, coil.positiveSlot, coil.positiveLayer, coil.negativeSlot, coil.negativeLayer); ..
+        msprintf("Mechanische Ordnung k=%d; elektrische Ordnung nu=k/p=%.8g", data.order, data.electricalOrder); ..
+        "Die Feld-/Spulenachsen gehören weiterhin zur Nutzgrundwelle k=p."; ""];
+    if settings.source <> "actual" then
+        lines = [lines; "Der Lernpfad verwendet die tatsächliche aktuelle Wicklung; die analytische Spektrumsreferenz ist davon unabhängig."; ""];
+    end
+    if view == "konvergenz" then
+        conv = data.convergence;
+        exact = conv.exactMatrixH(a,b);
+        partial = conv.finalMatrixH(a,b);
+        lines = [lines; "KONVERGENZ DER INDUKTIVITÄT"; ..
+            "Zeile = Empfang " + settings.phase + ", Spalte = Quelle " + settings.sourcePhase; ..
+            "Durchgezogen: endliche gemeinsame Fourier-Summe L_ab(K)."; ..
+            "Referenz: stückweise exaktes Integral im linearen Luftspaltmodell."; ..
+            "Ein einzelner Gegeninduktivitätsbeitrag darf negativ sein."; ..
+            "Die Gesamtmatrix-Abweichung verwendet die Frobeniusnorm und teilt nicht durch ein möglicherweise verschwindendes L_ab."; ""; ..
+            "Exakt L_"+settings.phase+settings.sourcePhase+" = "+ew_gui_format(exact*1000,10)+" mH"; ..
+            "Bis K="+string(conv.maxOrder)+": "+ew_gui_format(partial*1000,10)+" mH"; ..
+            "Matrixfehler = "+ew_gui_format(100*conv.relativeError($),8)+" Prozent"; ..
+            "Beitrag der gewählten Ordnung k="+string(data.order)+": "+ew_gui_format(data.selectedContributionH*1000,10)+" mH"; ..
+            "K-Konv. begrenzt nur dieses Diagramm; K des Spektrums und die exakte Matrix bleiben unabhängig."];
+        return;
+    end
+    steps = ["1. SPULE: beide tatsächlichen Nutseiten vorzeichenrichtig addieren"; ..
+        "2. GRUPPE: alle zugehörigen Spulen komplex addieren"; ..
+        "3. STRANG: alle Gruppen im gemeinsamen mechanischen Bezug addieren"; ..
+        "4. INDUKTIVITÄT: Empfangs- und Quellstrang derselben Ordnung kreuzen"];
+    contributions = list(data.coilContribution, data.groupContribution, data.phaseContribution);
+    labels = ["C_Spule,k"; "C_Gruppe,k"; "C_Strang,k"];
+    for stage = 1:3
+        marker = "";
+        if stage == settings.learningStage then marker = "  <--- gewählter Lernschritt"; end
+        entry = contributions(stage);
+        value = entry.rawFourier;
+        voltage = entry.voltageHarmonic;
+        lines = [lines; steps(stage)+marker; ..
+            labels(stage)+" = "+ew_gui_format(value.real,9)+" + j*("+ew_gui_format(value.imag,9)+")"; ..
+            "Spannungssumme bei k: "+ew_gui_format(voltage.real,9)+" + j*("+ew_gui_format(voltage.imag,9)+")"; ..
+            "Spulen: "+strcat(entry.coilIds,", "); ""];
+    end
+    lines = [lines; steps(4); ..
+        "Delta L_ab,k = (4*mu0*r*lFe*n^2/(pi*delta)) * Re(C_a,k * conj(C_b,k))"; ..
+        "Empfang "+settings.phase+", Quelle "+settings.sourcePhase+": "+ew_gui_format(data.selectedContributionH*1000,10)+" mH"; ..
+        "Der Gesamtbeitrag eines Strangs enthält auch die Kreuzprodukte verschiedener Spulen."; ..
+        "Spannungsvektoren benutzen exp(+j*k*phi); rohe Fourier-Koeffizienten exp(-j*k*phi)/(2*j*k)."; ..
+        "Ein getrenntes Ausrichten jedes Strangs würde die Gegeninduktivität verfälschen."];
+endfunction
+
 function fig = ew_gui_plot_figure(view, title)
     global ew_app;
     fig = [];
@@ -405,26 +570,35 @@ function ew_gui_matrix_plot(ind, ax)
     xstring(0.04, 0.07, "Psi = L i; Wmag = 1/2 i transponiert L i");
 endfunction
 
-function ew_gui_draw()
+function ew_gui_draw(view, bringToFront)
     global ew_app;
+    if argn(2) < 1 then view = ew_app.view; end
+    if argn(2) < 2 then bringToFront = %t; end
     w = ew_app.winding; s = ew_app.spectrum; ind = ew_app.inductance;
-    settings = ew_app.settings; view = ew_app.view;
+    settings = ew_app.settings;
     titles = struct("analyse", "Nutenspannungsstern - Strangstern - Zonung", ..
-        "wicklung", "Wickelschema: Zähne, Nuten, Spulen und Stränge", ..
+        "wicklung", "Wickelschema: gemeinsame Spulenauswahl", ..
         "spektrum", "Räumliches Wicklungsspektrum", ..
         "induktivitaet", "Luftspaltinduktivitäten, Spulenachsen und Feldverlauf", ..
-        "herleitung", "Mathematische Herleitung der Induktivität");
+        "herleitung", "Mathematische Herleitung der Induktivität", ..
+        "lernen", "Interaktiver Lernpfad: Spule - Gruppe - Strang - Induktivität", ..
+        "konvergenz", "Konvergenz der Induktivität gegen das exakte Integral");
     fig = ew_gui_plot_figure(view, titles(view));
+    selection = ew_app.selection;
     select view
     case "analyse" then
         subplot(2, 2, 1); ax1 = gca();
         subplot(2, 2, 2); ax2 = gca();
         subplot(2, 1, 2); ax3 = gca();
-        ew_plot_slot_star(w, ax1); ew_plot_phase_star(w, ax2); ew_plot_zone_plan(w, ax3);
+        ew_plot_slot_star(w, ax1, selection); ew_plot_phase_star(w, ax2, selection); ew_plot_zone_plan(w, ax3, selection);
     case "wicklung" then
-        ew_plot_winding(w, settings.connectionMode, settings.startSlot, settings.windingPhase, gca());
+        ew_plot_winding(w, settings.connectionMode, settings.startSlot, settings.windingPhase, gca(), selection);
     case "spektrum" then
-        ew_plot_spectrum(s, settings.display, settings.phase, gca());
+        if settings.source == "actual" then
+            ew_plot_spectrum(s, settings.display, settings.phase, gca(), selection);
+        else
+            ew_plot_spectrum(s, settings.display, settings.phase, gca());
+        end
     case "induktivitaet" then
         if ind.valid then
             subplot(2, 2, 1); ax1 = gca();
@@ -434,19 +608,56 @@ function ew_gui_draw()
             ew_gui_matrix_plot(ind, ax2);
             ew_plot_field(ind, ax3);
         else
-            xstring(0.1, 0.5, "Ohne gültige Wicklung keine Induktivitätsdiagramme.");
+            xstring(0.1, 0.5, "Ohne gültige Magnetgeometrie keine Induktivitätsdiagramme.");
         end
     case "herleitung" then
         ew_plot_derivation(w, ind, settings.stage, settings.phase, gca());
+    case "lernen" then
+        if ew_app.learning.valid then
+            ew_plot_learning(ew_app.learning, settings.learningStage, gca());
+        else
+            xstring(0.05, 0.6, ew_app.learning.warnings(:));
+        end
+    case "konvergenz" then
+        if ew_app.learning.valid then
+            ew_plot_convergence(ew_app.convergence, settings.phase, settings.sourcePhase, settings.selectedOrder, gca());
+        else
+            xstring(0.05, 0.6, ew_app.learning.warnings(:));
+        end
     end
-    ew_app.lastFigure = fig;
-    show_window(fig);
+    fig.user_data = struct("ewView", view, "selection", selection, ..
+        "coilId", settings.coilId, "selectedOrder", settings.selectedOrder);
+    fig.event_handler = "ew_gui_graphic_event";
+    fig.event_handler_enable = "on";
     drawnow();
+    if bringToFront then
+        ew_app.lastFigure = fig;
+        show_window(fig);
+    end
+endfunction
+
+function alive = ew_gui_figure_alive(fig)
+    alive = %f;
+    try alive = fig.type == "Figure"; catch alive = %f; end
+endfunction
+
+function ew_gui_refresh_views(drawCurrent)
+    global ew_app;
+    if argn(2) < 1 then drawCurrent = %f; end
+    views = fieldnames(ew_app.plotFigures);
+    for k = 1:size(views, "*")
+        view = views(k);
+        if drawCurrent & view == ew_app.view then continue; end
+        fig = ew_app.plotFigures(view);
+        if ~ew_gui_figure_alive(fig) then continue; end
+        ew_gui_draw(view, %f);
+    end
+    if drawCurrent then ew_gui_draw(ew_app.view, %t); end
 endfunction
 
 function success = ew_gui_view(view)
     global ew_app;
-    allowed = ["analyse"; "wicklung"; "spektrum"; "induktivitaet"; "herleitung"];
+    allowed = ["analyse"; "wicklung"; "spektrum"; "induktivitaet"; "herleitung"; "lernen"; "konvergenz"];
     if size(find(allowed == view), "*") == 0 then error("Unbekannte Ergebnisansicht."); end
     ew_app.view = view;
     success = ew_gui_calculate(%t);
@@ -456,6 +667,118 @@ function ew_gui_winding(), ew_gui_view("wicklung"); endfunction
 function ew_gui_spectrum(), ew_gui_view("spektrum"); endfunction
 function ew_gui_inductance(), ew_gui_view("induktivitaet"); endfunction
 function ew_gui_derivation(), ew_gui_view("herleitung"); endfunction
+function ew_gui_learning(), ew_gui_view("lernen"); endfunction
+function ew_gui_convergence(), ew_gui_view("konvergenz"); endfunction
+
+// Both native controls and diagram hit targets use this single selection path.
+function success = ew_gui_selection_changed()
+    global ew_app;
+    success = ew_gui_calculate(%f);
+endfunction
+
+function success = ew_gui_filter_changed()
+    global ew_app;
+    if ew_app.controls.windingPhase.value > 1 then
+        ew_app.controls.phase.value = ew_app.controls.windingPhase.value - 1;
+    end
+    success = ew_gui_selection_changed();
+endfunction
+
+function success = ew_gui_select_coil(coilId)
+    global ew_app;
+    success = %f;
+    names = ["A";"B";"C"];
+    chosen = [];
+    for k = 1:length(ew_app.winding.coils)
+        coil = ew_app.winding.coils(k);
+        if coil.id == coilId then chosen = coil; break; end
+    end
+    if isempty(chosen) then return; end
+    ew_app.controls.phase.value = find(names == chosen.phase);
+    coilNames = emptystr(0,1);
+    for k = 1:length(ew_app.winding.coils)
+        coil = ew_app.winding.coils(k);
+        if coil.phase == chosen.phase then coilNames($+1,1) = coil.id; end
+    end
+    ew_app.controls.coil.string = coilNames;
+    ew_app.controls.coil.value = find(coilNames == coilId);
+    if ew_app.controls.windingPhase.value > 1 then
+        ew_app.controls.windingPhase.value = find(names == chosen.phase) + 1;
+    end
+    success = ew_gui_selection_changed();
+endfunction
+
+function success = ew_gui_select_order(order)
+    global ew_app;
+    success = %f;
+    if ~isreal(order) | size(order,"*") <> 1 then return; end
+    if order < 1 | order > 2000 | order <> floor(order) then return; end
+    ew_app.controls.selectedOrder.string = string(order);
+    success = ew_gui_selection_changed();
+endfunction
+
+// Scilab's native listener emits 3 for a short left click, or 0 when the
+// button remains pressed beyond its click-delay window. These are alternative
+// notifications for one gesture; the release (-5) and motion (-1) are ignored.
+function ew_gui_graphic_event(win, x, y, ibut)
+    global ew_app;
+    if ibut <> 0 & ibut <> 3 then return; end
+    if typeof(ew_app) <> "st" then return; end
+    if ew_app.eventBusy then return; end
+    ew_app.eventBusy = %t;
+    try
+        fig = scf(win);
+        bestDistance = %inf;
+        candidates = list();
+        axes = fig.children;
+        for k = 1:size(axes,"*")
+            ax = axes(k);
+            if ax.type <> "Axes" then continue; end
+            metadata = ax.user_data;
+            if typeof(metadata) <> "st" then continue; end
+            if ~isfield(metadata,"ewHits") then continue; end
+            sca(ax);
+            for j = 1:length(metadata.ewHits)
+                hit = metadata.ewHits(j);
+                [px, py] = xchange(hit.x, hit.y, "f2i");
+                distance = sqrt((double(px)-x)^2+(double(py)-y)^2);
+                if distance > 22 then continue; end
+                if distance < bestDistance - 2 then
+                    bestDistance = distance;
+                    candidates = list(hit);
+                elseif abs(distance-bestDistance) <= 2 then
+                    candidates($+1) = hit;
+                end
+            end
+        end
+        if length(candidates) > 0 then
+            if typeof(fig.user_data) == "st" then
+                if isfield(fig.user_data,"ewView") then ew_app.view = fig.user_data.ewView; end
+            end
+            hit = candidates(1);
+            if hit.ewHit == "order" then
+                ew_gui_select_order(hit.order);
+            else
+                ids = emptystr(0,1);
+                for j = 1:length(candidates)
+                    candidate = candidates(j);
+                    if candidate.ewHit <> "coil" then continue; end
+                    if isempty(find(ids == candidate.coilId)) then ids($+1,1) = candidate.coilId; end
+                end
+                if ~isempty(ids) then
+                    current = find(ids == ew_app.settings.coilId);
+                    if isempty(current) then next = 1; else next = modulo(current(1),size(ids,"*"))+1; end
+                    ew_gui_select_coil(ids(next));
+                end
+            end
+        end
+        ew_app.lastFigure = fig;
+        show_window(fig);
+    catch
+        ew_app.controls.status.string = "Diagrammauswahl nicht verfügbar: " + lasterror();
+    end
+    ew_app.eventBusy = %f;
+endfunction
 
 function ew_gui_preset(index)
     global ew_app;
@@ -514,6 +837,8 @@ function ew_gui_save(kind)
         if kind == "csv" then
             if ew_app.view == "spektrum" then stem = stem + "-spektrum"; end
             if ew_app.view == "induktivitaet" then stem = stem + "-induktivitaet"; end
+            if ew_app.view == "lernen" then stem = stem + "-lernpfad"; end
+            if ew_app.view == "konvergenz" then stem = stem + "-konvergenz"; end
         end
         if kind == "report" then extension = "html"; stem = stem + "-herleitung"; end
         path = ew_gui_choose_file(extension, stem + "." + extension);
@@ -523,11 +848,13 @@ function ew_gui_save(kind)
             select ew_app.view
             case "spektrum" then ew_export_spectrum_csv(ew_app.spectrum, path);
             case "induktivitaet" then ew_export_inductance_csv(ew_app.inductance, path);
+            case "lernen" then ew_export_learning_csv(ew_app.learning, path);
+            case "konvergenz" then ew_export_convergence_csv(ew_app.convergence, ew_app.settings.phase, ew_app.settings.sourcePhase, path);
             else ew_export_csv(w, path, ew_app.settings);
             end
-        case "json" then ew_export_json(w, ew_app.spectrum, ew_app.inductance, path, ew_app.settings);
+        case "json" then ew_export_json(w, ew_app.spectrum, ew_app.inductance, path, ew_app.settings, ew_app.learning);
         case "svg" then ew_export_svg(ew_app.lastFigure, path);
-        case "report" then ew_export_report(w, ew_app.inductance, path);
+        case "report" then ew_export_report(w, ew_app.inductance, path, ew_app.learning);
         else error("Unbekanntes Exportformat.");
         end
         ew_app.controls.status.string = "Export gespeichert: " + path;

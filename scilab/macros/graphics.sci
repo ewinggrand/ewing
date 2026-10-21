@@ -20,6 +20,7 @@ function ax = ew_gfx_prepare(plotTitle, ax)
     ax.axes_visible = ["off", "off", "off"];
     ax.box = "off";
     ax.background = color("white");
+    ax.user_data = struct("ewHits",list(),"ewRole","");
     ax.font_size = 2;
     ax.title.text = plotTitle;
     ax.title.font_size = 3;
@@ -81,6 +82,75 @@ endfunction
 
 function r = ew_gfx_mod(value, period)
     r = modulo(modulo(value, period)+period, period);
+endfunction
+
+// Linked selection belongs to the drawing layer. It never changes a coil,
+// conductor sign, pairing, Fourier coefficient or canonical series chain.
+function chosen = ew_gfx_selected_coil(w, selection)
+    chosen = [];
+    if typeof(selection) <> "st" then return; end
+    id = "";
+    if isfield(selection, "coilId") then id = selection.coilId; end
+    if id == "" & isfield(selection, "selectedCoilId") then id = selection.selectedCoilId; end
+    if id == "" & isfield(selection, "selectedCoil") then
+        if typeof(selection.selectedCoil) == "st" then id = selection.selectedCoil.id; end
+    end
+    for index = 1:length(w.coils)
+        coil = w.coils(index);
+        if coil.id == id then chosen = coil; return; end
+    end
+endfunction
+
+function order = ew_gfx_selected_order(selection)
+    order = [];
+    if typeof(selection) <> "st" then return; end
+    if isfield(selection, "selectedOrder") then order = selection.selectedOrder; end
+    if isempty(order) & isfield(selection, "order") then order = selection.order; end
+endfunction
+
+function col = ew_gfx_link_color(phase, dimmed)
+    if ~dimmed then col = ew_gfx_phase_color(phase); return; end
+    select phase
+    case "A" then rgb = [198,87,54];
+    case "B" then rgb = [49,128,109];
+    case "C" then rgb = [86,104,201];
+    else rgb = [94,104,88];
+    end
+    col = addcolor(0.42*rgb/255 + 0.58*ones(1,3));
+endfunction
+
+function coilId = ew_gfx_side_coil(w, slot, layer)
+    coilId = "";
+    for index = 1:length(w.coils)
+        coil = w.coils(index);
+        if (coil.positiveSlot == slot & coil.positiveLayer == layer) | ..
+           (coil.negativeSlot == slot & coil.negativeLayer == layer) then
+            coilId = coil.id; return;
+        end
+    end
+endfunction
+
+function selected = ew_gfx_is_selected_side(chosen, slot, layer)
+    selected = %f;
+    if typeof(chosen) <> "st" then return; end
+    selected = (chosen.positiveSlot == slot & chosen.positiveLayer == layer) | ..
+        (chosen.negativeSlot == slot & chosen.negativeLayer == layer);
+endfunction
+
+function hits = ew_gfx_hit(hits, kind, coilId, x, y, slot, layer, order)
+    if argn(2) < 6 then slot = 0; end
+    if argn(2) < 7 then layer = 0; end
+    if argn(2) < 8 then order = 0; end
+    meta = struct("ewHit",kind,"coilId",coilId,"x",x,"y",y, ..
+        "slot",slot,"layer",layer,"order",order);
+    hits($+1) = meta;
+    // Both native scene metadata and data-coordinate targets are provided.
+    // The GUI can therefore resolve clicks without renderer-dependent boxes.
+    try entity = gce(); entity.user_data = meta; catch ignored = %t; end
+endfunction
+
+function ew_gfx_set_hits(ax, hits, role)
+    ax.user_data = struct("ewHits",hits,"ewRole",role);
 endfunction
 
 function node = ew_gfx_node(slot, layer)
@@ -401,12 +471,16 @@ function ew_gfx_paths(paths,col,lineWidth,casing)
     end
 endfunction
 
-function ax = ew_plot_winding(w,mode,startSlot,phaseFilter,ax)
+function ax = ew_plot_winding(w,mode,startSlot,phaseFilter,ax,selection)
     if argn(2)<2 then mode="series"; end
     if argn(2)<3 then startSlot=0; end
     if argn(2)<4 then phaseFilter=""; end
     if argn(2)<5 then ax=[]; end
+    if argn(2)<6 then selection=struct(); end
     ax=ew_gfx_prepare("Wickelschema - Leiter in Nuten zwischen den Zähnen",ax);
+    chosen=ew_gfx_selected_coil(w,selection); hasChoice=typeof(chosen)=="st"; chosenId="";
+    if hasChoice then chosenId=chosen.id; end
+    hits=list();
     layout=ew_build_winding_layout(w,mode,startSlot);
     if ~layout.valid then
         ax.data_bounds=[0,0;1,1]; ew_gfx_text(0.05,0.5,"Keine vollständige Wicklung: Bitte Eingaben prüfen."); return;
@@ -428,30 +502,41 @@ function ax = ew_plot_winding(w,mode,startSlot,phaseFilter,ax)
     // short-circuit polygon is used for an individual coil.
     for ii=1:length(layout.coilPaths)
         cc=layout.coilPaths(ii);
-        if phaseFilter<>"" & cc.phase<>phaseFilter then continue; end
-        col=ew_gfx_phase_color(cc.phase);
-        ew_gfx_paths(cc.topPaths,col,1.7,%t);
-        ew_gfx_paths(cc.bottomPaths,col,1.7,%t);
+        selected=cc.id==chosenId;
+        if phaseFilter<>"" & cc.phase<>phaseFilter & ~selected then continue; end
+        col=ew_gfx_link_color(cc.phase,hasChoice & ~selected); lineWidth=1.4;
+        if selected then lineWidth=3.5; end
+        ew_gfx_paths(cc.topPaths,col,lineWidth,%t);
+        ew_gfx_paths(cc.bottomPaths,col,lineWidth,%t);
         for which=1:2
             if which==1 then ss=cc.positiveSide; sgn=1; else ss=cc.negativeSide; sgn=-1; end
             ew_gfx_line([ss.x,layout.bodyTop;ss.x,layout.bodyBottom],color("white"),5);
-            ew_gfx_line([ss.x,layout.bodyTop;ss.x,layout.bodyBottom],col,1.8);
+            ew_gfx_line([ss.x,layout.bodyTop;ss.x,layout.bodyBottom],col,lineWidth);
             midY=(layout.bodyTop+layout.bodyBottom)/2;
             // The 6.16-unit-wide solid tip fits even Q120's two-layer gap:
             // pitch36, lane4.32, halfgap7.92; 4.32+3.08 < 7.92.
-            ew_gfx_arrow(ss.x,midY+sgn*28,ss.x,midY-sgn*28,col,1.8);
+            ew_gfx_arrow(ss.x,midY+sgn*28,ss.x,midY-sgn*28,col,lineWidth);
+            if which==1 then slot=cc.positiveSlot; layer=cc.positiveLayer; else slot=cc.negativeSlot; layer=cc.negativeLayer; end
+            hits=ew_gfx_hit(hits,"coil",cc.id,ss.x,midY,slot,layer);
+            hits=ew_gfx_hit(hits,"coil",cc.id,ss.x,layout.bodyTop+16,slot,layer);
+            if selected then
+                symbol="+"; if sgn<0 then symbol="-"; end
+                ew_gfx_text(ss.x-layout.slotPitch*0.04,layout.bodyTop+7,symbol,col,2);
+            end
         end
-        ew_gfx_text(cc.labelX-layout.slotPitch*0.11,layout.bodyTop-8,cc.id,col,1);
+        fontSize=1; if selected then fontSize=2.2; end
+        ew_gfx_text(cc.labelX-layout.slotPitch*0.11,layout.bodyTop-8,cc.id,col,fontSize);
+        hits=ew_gfx_hit(hits,"coil",cc.id,cc.labelX,layout.bodyTop-8);
     end
     for ii=1:length(layout.connections)
         link=layout.connections(ii);
         if phaseFilter<>"" & link.phase<>phaseFilter then continue; end
-        ew_gfx_paths(link.paths,ew_gfx_phase_color(link.phase),1.6,%t);
+        ew_gfx_paths(link.paths,ew_gfx_link_color(link.phase,hasChoice),1.3,%t);
     end
     for ii=1:length(layout.terminals)
         term=layout.terminals(ii);
         if phaseFilter<>"" & term.phase<>phaseFilter then continue; end
-        col=ew_gfx_phase_color(term.phase); ew_gfx_paths(term.paths,col,1.6,%f);
+        col=ew_gfx_link_color(term.phase,hasChoice & term.coilId<>chosenId); ew_gfx_paths(term.paths,col,1.6,%f);
         ew_gfx_text(term.x-layout.slotPitch*0.1,term.y+12,term.label,col,1.6);
     end
     for ii=1:length(layout.zoneBoundaries)
@@ -463,7 +548,10 @@ function ax = ew_plot_winding(w,mode,startSlot,phaseFilter,ax)
     ew_gfx_line([dim.x2,dim.y-5;dim.x2,dim.y+5],dark,1);
     ew_gfx_text((dim.x1+dim.x2)/2-layout.slotPitch*0.7,dim.y-9,"tau_p = Q/(2p) = "+msprintf("%.4g",w.polePitch)+" Nutteilungen",dark,1.5);
     ew_gfx_text(60,layout.geometry.annotationY,"Schnittnut "+string(layout.startSlot)+" | "+mode+" | L1 rechts, L2 links | Blau: Zähne; Weiß: Nuten",dark,1.5);
-    ew_gfx_text(60,layout.geometry.legendY,"Plus-Seite: Pfeil aufwärts; Minus-Seite: abwärts. Stränge: A / B / C",dark,1.5);
+    legend="Plus-Seite: Pfeil aufwärts; Minus-Seite: abwärts. Stränge: A / B / C";
+    if hasChoice then legend=chosen.id+": +Nut "+string(chosen.positiveSlot)+"/L"+string(chosen.positiveLayer)+"; -Nut "+string(chosen.negativeSlot)+"/L"+string(chosen.negativeLayer)+". Auswahl in allen Ansichten gekoppelt."; end
+    ew_gfx_text(60,layout.geometry.legendY,legend,dark,1.5);
+    ew_gfx_set_hits(ax,hits,"winding");
 endfunction
 // Native Scilab plots. The coefficients and geometry come from the numerical
 // models; no plot changes conductor signs or independently rotates phases.
@@ -474,10 +562,13 @@ function label = ew_gfx_number(value, digits)
     label = strsubst(msprintf("%.*f", digits, value), ".", ",");
 endfunction
 
-function ax = ew_plot_slot_star(w, axesHandle)
+function ax = ew_plot_slot_star(w, axesHandle, selection)
     if argn(2) < 2 then axesHandle = []; end
+    if argn(2) < 3 then selection = struct(); end
+    chosen = ew_gfx_selected_coil(w,selection); hasChoice = typeof(chosen)=="st"; hits=list();
     ax = ew_gfx_prepare("Nutenspannungsstern - elektrische Winkel", axesHandle);
     ax.data_bounds = [-1.45, -1.45; 1.45, 1.45];
+    if hasChoice then ax.data_bounds = [-1.45,-1.72;1.45,1.45]; end
     ax.isoview = "on";
     ax.axes_visible = ["off", "off", "off"];
     if length(w.slotAssignments) == 0 then
@@ -512,7 +603,7 @@ function ax = ew_plot_slot_star(w, axesHandle)
         visited(indices) = 1;
         side = w.slotAssignments(n);
         angle = side.angleDeg * %pi/180;
-        ew_gfx_arrow(0,0,0.96*cos(angle),0.96*sin(angle),ew_gfx_phase_color(side.phase),1.5);
+        ew_gfx_arrow(0,0,0.96*cos(angle),0.96*sin(angle),ew_gfx_link_color(side.phase,hasChoice),1.3);
         numbers = emptystr(size(indices,"*"),1);
         for j = 1:size(indices,"*")
             member = w.slotAssignments(indices(j)); numbers(j)=string(member.slot);
@@ -524,13 +615,43 @@ function ax = ew_plot_slot_star(w, axesHandle)
         end
         ew_gfx_text(1.03*cos(angle)-0.035,1.03*sin(angle),label,color("black"),2);
     end
-    ew_gfx_text(-1.4,-1.4,msprintf("Q = %d, p = %d, q = %.5g",w.slots,w.polePairs,w.q),color("black"),2);
+    // All actual layers remain selectable, even when several electrical rays
+    // coincide. The GUI cycles equally close targets instead of inventing one.
+    for n=1:length(w.coils)
+        coil=w.coils(n);
+        for which=1:2
+            if which==1 then slot=coil.positiveSlot;layer=coil.positiveLayer; else slot=coil.negativeSlot;layer=coil.negativeLayer;end
+            angle=2*%pi*w.polePairs*(slot-1)/w.slots;
+            hits=ew_gfx_hit(hits,"coil",coil.id,0.96*cos(angle),0.96*sin(angle),slot,layer);
+        end
+    end
+    if hasChoice then
+        col=ew_gfx_phase_color(chosen.phase);
+        plus=2*%pi*w.polePairs*(chosen.positiveSlot-1)/w.slots;
+        minus=2*%pi*w.polePairs*(chosen.negativeSlot-1)/w.slots;
+        rawMinusColor=addcolor([0.38,0.43,0.36]);
+        ew_gfx_line([0,0;cos(minus),sin(minus)],rawMinusColor,2,2);
+        ew_gfx_arrow(0,0,cos(plus),sin(plus),col,3.4);
+        hits=ew_gfx_hit(hits,"coil",chosen.id,cos(plus),sin(plus),chosen.positiveSlot,chosen.positiveLayer);
+        ew_gfx_arrow(0,0,-0.83*cos(minus),-0.83*sin(minus),col,3.4);
+        hits=ew_gfx_hit(hits,"coil",chosen.id,-0.83*cos(minus),-0.83*sin(minus),chosen.negativeSlot,chosen.negativeLayer);
+        ew_gfx_text(1.10*cos(plus)-0.05,1.10*sin(plus)+0.09,"+N"+string(chosen.positiveSlot)+"/L"+string(chosen.positiveLayer),col,2);
+        ew_gfx_text(-0.87*cos(minus)-0.05,-0.87*sin(minus)-0.14,"-N"+string(chosen.negativeSlot)+"/L"+string(chosen.negativeLayer),col,2);
+        ew_gfx_text(-1.40,-1.43,chosen.id+": volle Pfeile = vorzeichenrichtige Seitenbeitraege",col,1.5);
+        ew_gfx_text(-1.40,-1.61,"Grau gestrichelt: rohe Minus-Nutspannung vor der Umkehr um 180 Grad.",rawMinusColor,1.4);
+    else
+        ew_gfx_text(-1.4,-1.4,msprintf("Q = %d, p = %d, q = %.5g",w.slots,w.polePairs,w.q),color("black"),2);
+    end
+    ew_gfx_set_hits(ax,hits,"slot-star");
 endfunction
 
-function ax = ew_plot_phase_star(w, axesHandle)
+function ax = ew_plot_phase_star(w, axesHandle, selection)
     if argn(2) < 2 then axesHandle = []; end
+    if argn(2) < 3 then selection=struct(); end
+    chosen=ew_gfx_selected_coil(w,selection); hasChoice=typeof(chosen)=="st"; hits=list();
     ax = ew_gfx_prepare("Strangspannungsstern - Addition der tatsaechlichen Nutseiten",axesHandle);
     ax.data_bounds = [-1.4,-1.4;1.4,1.4]; ax.isoview="on";
+    if hasChoice then ax.data_bounds=[-1.4,-1.62;1.4,1.4]; end
     ax.axes_visible=["off","off","off"];
     if ~w.valid then
         ew_gfx_text(-1.2,0,"Keine vollstaendige Wicklung: Strangstern nicht verfuegbar",color("black"),2);
@@ -545,14 +666,19 @@ function ax = ew_plot_phase_star(w, axesHandle)
     ew_gfx_line([-1.18,0;1.18,0],color("grey"),1);
     ew_gfx_line([0,-1.18;0,1.18],color("grey"),1);
     for index=1:length(w.phases)
-        phase=w.phases(index); phaseColor=ew_gfx_phase_color(phase.phase);
+        phase=w.phases(index); phaseColor=ew_gfx_link_color(phase.phase,hasChoice);
         chain=[0,0]; current=[0,0];
         for n=1:length(w.slotLayers)
             side=w.slotLayers(n);
             if side.phase <> phase.phase then continue; end
             angle=side.angleDeg*%pi/180;
+            previous=current;
             current=current+side.sign*[cos(angle),sin(angle)]/count;
             chain($+1,:)=current;
+            coilId=ew_gfx_side_coil(w,side.slot,side.layer);
+            middle=(previous+current)/2;
+            hits=ew_gfx_hit(hits,"coil",coilId,middle(1),middle(2),side.slot,side.layer);
+            hits=ew_gfx_hit(hits,"coil",coilId,current(1),current(2),side.slot,side.layer);
         end
         ew_gfx_line(chain,phaseColor,1,2);
         endpoint=[phase.x,phase.y]/count;
@@ -560,11 +686,42 @@ function ax = ew_plot_phase_star(w, axesHandle)
         angle=atan(endpoint(2),endpoint(1));
         ew_gfx_text(1.13*cos(angle)-0.08,1.13*sin(angle),phase.phase+" : kw = "+ew_gfx_number(phase.kw,5),phaseColor,2);
     end
-    ew_gfx_text(-1.35,-1.35,"Gestrichelt: Vektoraddition; Pfeile: normierte Strangresultanten",color("black"),2);
+    if hasChoice then
+        col=ew_gfx_phase_color(chosen.phase); current=[0,0]; selectedSidePoints=list();
+        for n=1:length(w.slotLayers)
+            side=w.slotLayers(n);
+            if side.phase<>chosen.phase then continue; end
+            angle=side.angleDeg*%pi/180;
+            next=current+side.sign*[cos(angle),sin(angle)]/count;
+            if ew_gfx_is_selected_side(chosen,side.slot,side.layer) then
+                selectedSidePoints($+1)=struct("start",current,"finish",next,"side",side);
+            end
+            current=next;
+        end
+        for n=1:length(selectedSidePoints)
+            segment=selectedSidePoints(n); side=segment.side;
+            ew_gfx_arrow(segment.start(1),segment.start(2),segment.finish(1),segment.finish(2),col,3.2);
+            middle=(segment.start+segment.finish)/2;
+            hits=ew_gfx_hit(hits,"coil",chosen.id,middle(1),middle(2),side.slot,side.layer);
+        end
+        plus=2*%pi*w.polePairs*(chosen.positiveSlot-1)/w.slots;
+        minus=2*%pi*w.polePairs*(chosen.negativeSlot-1)/w.slots;
+        selectedVector=[cos(plus)-cos(minus),sin(plus)-sin(minus)]/count;
+        ew_gfx_arrow(0,0,selectedVector(1),selectedVector(2),col,4);
+        hits=ew_gfx_hit(hits,"coil",chosen.id,selectedVector(1),selectedVector(2),chosen.positiveSlot,chosen.positiveLayer);
+        ew_gfx_text(selectedVector(1)+0.04,selectedVector(2)-0.10,chosen.id+": Spulenbeitrag",col,2);
+        ew_gfx_text(-1.35,-1.35,"Kräftig: gewählte Spule und ihre beiden Schritte in der Strangaddition.",col,1.5);
+        ew_gfx_text(-1.35,-1.53,"Alle Vektoren durch maximale Strang-Seitenzahl normiert; Grundwelle k=p.",color("black"),1.5);
+    else
+        ew_gfx_text(-1.35,-1.35,"Gestrichelt: Vektoraddition; Pfeile: normierte Strangresultanten",color("black"),2);
+    end
+    ew_gfx_set_hits(ax,hits,"phase-star");
 endfunction
 
-function ax = ew_plot_zone_plan(w, axesHandle)
+function ax = ew_plot_zone_plan(w, axesHandle, selection)
     if argn(2)<2 then axesHandle=[]; end
+    if argn(2)<3 then selection=struct(); end
+    chosen=ew_gfx_selected_coil(w,selection); hasChoice=typeof(chosen)=="st"; hits=list();
     ax=ew_gfx_prepare("Zonenplan - Spulenseiten in den Nuten zwischen blauen Zaehnen",axesHandle);
     ax.data_bounds=[0.2,-0.4;w.slots+1.8,3.6];
     ax.isoview="off"; ax.axes_visible=["off","off","off"];
@@ -582,16 +739,29 @@ function ax = ew_plot_zone_plan(w, axesHandle)
         lane=0;
         if w.layers==2 then lane=0.08*(3-2*side.layer); end
         xpos=side.slot+lane;
+        selected=ew_gfx_is_selected_side(chosen,side.slot,side.layer);
         if side.sign>0 then ya=0.72; yb=1.94; else ya=1.94; yb=0.72; end
-        ew_gfx_arrow(xpos,ya,xpos,yb,ew_gfx_phase_color(side.phase),2);
+        col=ew_gfx_link_color(side.phase,hasChoice & ~selected); width=1.5;
+        if selected then width=3.5;
+            ew_gfx_polygon([xpos-0.055,0.57;xpos+0.055,0.57;xpos+0.055,2.13;xpos-0.055,2.13],addcolor([1,0.95,0.84]));
+        end
+        ew_gfx_arrow(xpos,ya,xpos,yb,col,width);
+        coilId=ew_gfx_side_coil(w,side.slot,side.layer);
+        hits=ew_gfx_hit(hits,"coil",coilId,xpos,(ya+yb)/2,side.slot,side.layer);
+        if selected then ew_gfx_text(xpos-0.12,2.25,chosen.id+"/L"+string(side.layer),col,1.5); end
     end
-    ew_gfx_text(0.5,-0.25,"Nuten: 1..Q, periodische Randnut 1; L1 rechts / L2 links aufgefaechert",color("black"),2);
+    legend="Nuten: 1..Q, periodische Randnut 1; L1 rechts / L2 links aufgefaechert";
+    if hasChoice then legend=chosen.id+": +Nut "+string(chosen.positiveSlot)+"/L"+string(chosen.positiveLayer)+" und -Nut "+string(chosen.negativeSlot)+"/L"+string(chosen.negativeLayer)+" hervorgehoben. Seiten anklicken: Spule wählen."; end
+    ew_gfx_text(0.5,-0.25,legend,color("black"),2);
+    ew_gfx_set_hits(ax,hits,"zone-plan");
 endfunction
 
-function ax=ew_plot_spectrum(spectrum,displayMode,phase,axesHandle)
+function ax=ew_plot_spectrum(spectrum,displayMode,phase,axesHandle,selection)
     if argn(2)<2 then displayMode="real"; end
     if argn(2)<3 then phase="A"; end
     if argn(2)<4 then axesHandle=[]; end
+    if argn(2)<5 then selection=struct(); end
+    chosenOrder=ew_gfx_selected_order(selection); hits=list();
     plotTitle="Raumspektrum - Strang "+phase;
     if isfield(spectrum,"title") then plotTitle="Raumspektrum - "+spectrum.title;end
     ax=ew_gfx_prepare(plotTitle,axesHandle);
@@ -618,7 +788,13 @@ function ax=ew_plot_spectrum(spectrum,displayMode,phase,axesHandle)
         if size(spectrum.fundamentalOrder,"*")>0 then
             if orders(n)==spectrum.fundamentalOrder then width=3; end
         end
-        ew_gfx_line([orders(n),0;orders(n),values(n)],phaseColor,width);
+        selected=%f;
+        if ~isempty(chosenOrder) then selected=orders(n)==chosenOrder; end
+        col=ew_gfx_link_color(phase,~isempty(chosenOrder) & ~selected);
+        if selected then width=4; end
+        ew_gfx_line([orders(n),0;orders(n),values(n)],col,width);
+        hits=ew_gfx_hit(hits,"order","",orders(n),values(n)/2,0,0,orders(n));
+        hits=ew_gfx_hit(hits,"order","",orders(n),values(n),0,0,orders(n));
     end
     if size(spectrum.fundamentalOrder,"*")>0 then
         label="Nutzgrundwelle k = p = "+string(spectrum.fundamentalOrder);
@@ -626,7 +802,12 @@ function ax=ew_plot_spectrum(spectrum,displayMode,phase,axesHandle)
     else
         label="Analytische Referenz ohne festgelegte Polpaarzahl";
     end
+    if ~isempty(chosenOrder) then
+        label=label+"; gewählt k="+string(chosenOrder);
+        if chosenOrder>max(orders) then label=label+" ausserhalb des Plotbereichs"; end
+    end
     ew_gfx_text(0.3,upper+0.13*spread,label,color("black"),2);
+    ew_gfx_set_hits(ax,hits,"spectrum");
 endfunction
 
 function ax=ew_plot_axes(data,phase,coilId,axesHandle)
@@ -634,6 +815,7 @@ function ax=ew_plot_axes(data,phase,coilId,axesHandle)
     if argn(2)<3 then coilId=""; end
     if argn(2)<4 then axesHandle=[]; end
     ax=ew_gfx_prepare("Spulen- und Strangmittelachsen: orientierte MMF-Grundwelle",axesHandle);
+    hits=list();
     ax.data_bounds=[-1.5,-1.62;1.5,1.5]; ax.isoview="on";
     ax.axes_visible=["off","off","off"];
     if ~data.valid then
@@ -657,7 +839,9 @@ function ax=ew_plot_axes(data,phase,coilId,axesHandle)
         first=%f;
         angle=coil.axisRad*data.polePairs; width=1;
         if selected then width=3; chosen=coil; end
-        ew_gfx_arrow(0,0,cos(angle),sin(angle),phaseColor,width);
+        col=ew_gfx_link_color(phase,coilId<>"" & ~selected);
+        ew_gfx_arrow(0,0,cos(angle),sin(angle),col,width);
+        hits=ew_gfx_hit(hits,"coil",coil.id,cos(angle),sin(angle),coil.positiveSlot,coil.positiveLayer);
         if selected then ew_gfx_text(1.28*cos(angle)-0.05,1.28*sin(angle),coil.id,phaseColor,3); end
     end
     for n=1:length(data.phases)
@@ -672,6 +856,7 @@ function ax=ew_plot_axes(data,phase,coilId,axesHandle)
         ew_gfx_text(-1.42,-1.38,chosen.id+": geometrische Mitte = "+ew_gfx_number(chosen.centerDeg,2)+"°; relative elektrische Achse = "+ew_gfx_number(chosen.relativeElectricalDeg,2)+"°",phaseColor,2);
     end
     ew_gfx_text(-1.42,-1.55,"Elektrisch gefaltet: alpha = p*phi. Gestrichelt: gemeinsame Strangmittelachse.",color("black"),2);
+    ew_gfx_set_hits(ax,hits,"axes");
 endfunction
 
 function ax=ew_plot_field(data,axesHandle)

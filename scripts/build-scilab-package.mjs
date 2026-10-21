@@ -27,6 +27,12 @@ const formulas = [
   ["matrix-linkage", String.raw`\begin{bmatrix}\Psi_A\\\Psi_B\\\Psi_C\end{bmatrix}=\begin{bmatrix}L_{AA}&L_{AB}&L_{AC}\\L_{BA}&L_{BB}&L_{BC}\\L_{CA}&L_{CB}&L_{CC}\end{bmatrix}\begin{bmatrix}i_A\\i_B\\i_C\end{bmatrix}`],
   ["differential", String.raw`L_{ab}=\frac{\partial\Psi_a}{\partial i_b},\quad L_{aa}=\left.\frac{\Psi_a}{i_a}\right|_{i_{b\ne a}=0}`],
   ["energy", String.raw`W_{\mathrm{mag}}=\frac12\boldsymbol i^{\mathsf T}\mathbf L\boldsymbol i=\frac{\mu_0r\ell_{\mathrm{Fe}}}{2\delta_{\mathrm{eff}}}\int_0^{2\pi}\Theta^2\,d\varphi\ge0`],
+  ["learning-voltage", String.raw`U_{c,k}=e^{jk\varphi_{c,+}}-e^{jk\varphi_{c,-}},\quad D_{c,k}=\overline{U_{c,k}},\quad C_{c,k}=\frac{\overline{U_{c,k}}}{2jk}`],
+  ["learning-chain", String.raw`C_{g,k}=\sum_{c\in g}C_{c,k},\qquad C_{a,k}=\sum_{g\in a}C_{g,k}`],
+  ["learning-inductance", String.raw`\Delta L_{ab,k}=\frac{4\mu_0r\ell_{\mathrm{Fe}}n^2}{\pi\delta}\operatorname{Re}\{C_{a,k}\overline{C_{b,k}}\}=\frac{4\mu_0r\ell_{\mathrm{Fe}}n^2}{\pi\delta}|C_{a,k}||C_{b,k}|\cos(\arg C_{a,k}-\arg C_{b,k})`],
+  ["learning-cross-terms", String.raw`\left|\sum_c C_{c,k}\right|^2=\sum_c|C_{c,k}|^2+2\sum_{c<d}\operatorname{Re}\{C_{c,k}\overline{C_{d,k}}\}`],
+  ["learning-convergence", String.raw`L_{ab}^{(K)}=\sum_{k=1}^K\Delta L_{ab,k},\qquad\varepsilon_K=\frac{\|\mathbf L-\mathbf L^{(K)}\|_F}{\|\mathbf L\|_F}`],
+  ["learning-flux", String.raw`\Psi_{a,k}=\sum_{b\in\{A,B,C\}}\Delta L_{ab,k}i_b`],
 ];
 const root = new URL("../scilab/", import.meta.url);
 await mkdir(new URL("resources/", root), { recursive: true });
@@ -43,7 +49,7 @@ async function collect(directory, prefix = "") {
   }
 }
 await collect(root);
-entries["LESEN.txt"] = strToU8("Wicklungsatelier fuer Scilab · Version 1.0\n\nScilab Desktop 2024.1 oder neuer empfohlen.\nZIP vollstaendig entpacken und Scilab starten.\nDatei > Ausfuehren: wicklungsatelier-scilab/start.sce auswaehlen.\nKeine ATOMS-Toolbox, kein Node.js und keine Internetverbindung erforderlich.\nAnleitung und mathematisches Modell: wicklungsatelier-scilab/README.md.\nDie voreingestellten Maschinenabmessungen sind Beispielwerte.\n");
+entries["LESEN.txt"] = strToU8("Wicklungsatelier fuer Scilab · Version 1.1\n\nScilab Desktop 2024.1 oder neuer empfohlen.\nZIP vollstaendig entpacken und Scilab starten.\nDatei > Ausfuehren: wicklungsatelier-scilab/start.sce auswaehlen.\nNeu: verknuepfte Spulenauswahl, Lernansicht fuer einzelne Raumharmonische und Konvergenz der Induktivitaet.\nKeine ATOMS-Toolbox, kein Node.js und keine Internetverbindung erforderlich.\nAnleitung und mathematisches Modell: wicklungsatelier-scilab/README.md.\nDie voreingestellten Maschinenabmessungen sind Beispielwerte.\n");
 const zip = zipSync(entries, { level: 9, mtime: new Date("2020-01-01T00:00:00Z") });
 const destination = new URL("../downloads/wicklungsatelier-scilab.zip", import.meta.url);
 await writeFile(destination, zip);
