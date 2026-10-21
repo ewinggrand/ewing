@@ -54,6 +54,15 @@ endfunction
 
 function ew_gui()
     global ew_app;
+    // A timer from a previous application instance must not change the new one.
+    if typeof(ew_app)=="st" then
+        if isfield(ew_app,"animationPlaying") then
+            ew_gui_animation_pause();
+            if isfield(ew_app.plotFigures,"animation") then
+                try delete(ew_app.plotFigures.animation);catch ignored=%t;end
+            end
+        end
+    end
     // Reopening replaces only this application window, never unrelated figures.
     if typeof(ew_app) == "st" then
         if isfield(ew_app, "figure") then
@@ -147,8 +156,10 @@ function ew_gui()
     c.sourcePhase.tooltipstring = "Erregender Strang; der Strang links ist die Empfangswicklung";
     c.convergenceOrder = ew_gui_popup(fig, ["20"; "60"; "120"; "360"; "1200"], 3, [0.892 0.617 0.088 0.035], "ew-convergence-order");
     c.convergenceOrder.tooltipstring = "Unabhängige höchste Ordnung des Konvergenzdiagramms";
+    c.animation = ew_gui_button(fig, "Zeigeranimation", "ew_gui_animation();", [0.35 0.561 0.18 0.035]);
+    ew_gui_label(fig, "Schrittweise: Formel → eingesetzte Werte → Ergebnis", [0.545 0.561 0.435 0.030], 9);
     c.report = uicontrol(fig, "style", "edit", "units", "normalized", ..
-        "position", [0.35 0.205 0.63 0.395], "string", "Berechnung wird vorbereitet ...", ..
+        "position", [0.35 0.205 0.63 0.344], "string", "Berechnung wird vorbereitet ...", ..
         "min", 0, "max", 1000, "horizontalalignment", "left", "fontsize", 11, ..
         "fontname", "monospaced", "backgroundcolor", [1 1 0.99], ..
         "foregroundcolor", [0.23 0.29 0.20], "tag", "ew-report");
@@ -170,7 +181,10 @@ function ew_gui()
         "lastFigure", [], "view", "analyse", "settings", struct(), ..
         "winding", struct(), "spectrum", struct(), "inductance", struct(), ..
         "selection", struct(), "learning", struct("valid", %f), "convergence", struct(), ..
-        "eventBusy", %f, "windingComputations", 0, "inductanceComputations", 0);
+        "eventBusy", %f, "windingComputations", 0, "inductanceComputations", 0, ..
+        "animation", struct("valid",%f,"frames",list(),"frameCount",0), ..
+        "animationFrame",1,"animationPlaying",%f,"animationGeneration",0, ..
+        "animationTimer",[],"animationControls",struct(),"animationHighlight",%f);
     fig.visible = "on";
     show_window(fig);
     ew_gui_calculate(%f);
@@ -202,6 +216,7 @@ function settings = ew_gui_read_settings()
     if settings.startSlot <> floor(settings.startSlot) | settings.startSlot < 0 | settings.startSlot > settings.slots then
         error("Der Umfangsschnitt muss 0 oder eine Nutnummer von 1 bis Q sein.");
     end
+    settings.animationFrame=ew_app.animationFrame;
     settings.parameters = struct("radiusM", ew_gui_number(c.diameterMm, "Luftspaltdurchmesser") / 2000, ..
         "lengthM", ew_gui_number(c.lengthMm, "Eisenlänge") / 1000, ..
         "gapM", ew_gui_number(c.gapMm, "Wirksamer Luftspalt") / 1000, ..
@@ -324,6 +339,13 @@ function success = ew_gui_calculate(drawFigures)
         ew_app.spectrum = spectrum;
         ew_app.inductance = inductance;
         ew_app.learning = learning;
+        sameAnimation=sameWinding & ew_gui_same_fields(previous,settings,["coilId";"phase";"selectedOrder"]);
+        if ~sameAnimation | ~learning.valid | ~ew_app.animation.valid then
+            ew_gui_animation_pause();
+            ew_app.animation=ew_compute_animation(learning);
+            ew_app.animationFrame=1;settings.animationFrame=1;
+            ew_app.settings.animationFrame=1;ew_app.animationHighlight=%f;
+        end
         ew_gui_update_report();
         if winding.valid then
             ew_app.controls.status.string = msprintf("Q=%d, p=%d, y=%d | Auswahl %s | k=%d | offene Ansichten sind verknüpft.", ..
@@ -365,7 +387,11 @@ endfunction
 function ew_gui_update_report()
     global ew_app;
     settings = ew_app.settings;
-    lines = ew_gui_report(ew_app.winding, ew_app.spectrum, ew_app.inductance, settings, ew_app.view, ew_app.learning);
+    if ew_app.view=="animation" then
+        lines=ew_animation_report(ew_app.animation,ew_app.animationFrame);
+    else
+        lines = ew_gui_report(ew_app.winding, ew_app.spectrum, ew_app.inductance, settings, ew_app.view, ew_app.learning);
+    end
     if ew_app.winding.valid then
         selected = ["GEMEINSAME AUSWAHL: " + settings.coilId + " / Strang " + settings.phase + ..
             " / mechanische Raumordnung k=" + string(settings.selectedOrder); ..
@@ -378,6 +404,7 @@ function ew_gui_update_report()
     case "induktivitaet" then ew_app.controls.exportCsv.string = "Induktivität CSV";
     case "lernen" then ew_app.controls.exportCsv.string = "Lernpfad CSV";
     case "konvergenz" then ew_app.controls.exportCsv.string = "Konvergenz CSV";
+    case "animation" then ew_app.controls.exportCsv.string = "Animation CSV";
     else ew_app.controls.exportCsv.string = "Nutbelegung CSV";
     end
 endfunction
@@ -574,6 +601,7 @@ function ew_gui_draw(view, bringToFront)
     global ew_app;
     if argn(2) < 1 then view = ew_app.view; end
     if argn(2) < 2 then bringToFront = %t; end
+    if view=="animation" then ew_gui_animation_draw(bringToFront);return;end
     w = ew_app.winding; s = ew_app.spectrum; ind = ew_app.inductance;
     settings = ew_app.settings;
     titles = struct("analyse", "Nutenspannungsstern - Strangstern - Zonung", ..
@@ -585,6 +613,10 @@ function ew_gui_draw(view, bringToFront)
         "konvergenz", "Konvergenz der Induktivität gegen das exakte Integral");
     fig = ew_gui_plot_figure(view, titles(view));
     selection = ew_app.selection;
+    if view=="wicklung" & ew_app.animationHighlight & ew_app.animation.valid then
+        frame=ew_app.animation.frames(ew_app.animationFrame);
+        selection.activeCoilIds=frame.activeCoilIds;
+    end
     select view
     case "analyse" then
         subplot(2, 2, 1); ax1 = gca();
@@ -657,7 +689,7 @@ endfunction
 
 function success = ew_gui_view(view)
     global ew_app;
-    allowed = ["analyse"; "wicklung"; "spektrum"; "induktivitaet"; "herleitung"; "lernen"; "konvergenz"];
+    allowed = ["analyse"; "wicklung"; "spektrum"; "induktivitaet"; "herleitung"; "lernen"; "konvergenz";"animation"];
     if size(find(allowed == view), "*") == 0 then error("Unbekannte Ergebnisansicht."); end
     ew_app.view = view;
     success = ew_gui_calculate(%t);
@@ -669,10 +701,14 @@ function ew_gui_inductance(), ew_gui_view("induktivitaet"); endfunction
 function ew_gui_derivation(), ew_gui_view("herleitung"); endfunction
 function ew_gui_learning(), ew_gui_view("lernen"); endfunction
 function ew_gui_convergence(), ew_gui_view("konvergenz"); endfunction
+function ew_gui_animation()
+    ew_gui_view("animation");ew_gui_animation_sync_winding();
+endfunction
 
 // Both native controls and diagram hit targets use this single selection path.
 function success = ew_gui_selection_changed()
     global ew_app;
+    ew_gui_animation_pause();
     success = ew_gui_calculate(%f);
 endfunction
 
@@ -828,6 +864,7 @@ endfunction
 
 function ew_gui_save(kind)
     global ew_app;
+    ew_gui_animation_pause();
     try
         drawFigures = kind == "svg";
         if ~ew_gui_calculate(drawFigures) then return; end
@@ -839,6 +876,7 @@ function ew_gui_save(kind)
             if ew_app.view == "induktivitaet" then stem = stem + "-induktivitaet"; end
             if ew_app.view == "lernen" then stem = stem + "-lernpfad"; end
             if ew_app.view == "konvergenz" then stem = stem + "-konvergenz"; end
+            if ew_app.view == "animation" then stem = stem + "-animation"; end
         end
         if kind == "report" then extension = "html"; stem = stem + "-herleitung"; end
         path = ew_gui_choose_file(extension, stem + "." + extension);
@@ -850,11 +888,12 @@ function ew_gui_save(kind)
             case "induktivitaet" then ew_export_inductance_csv(ew_app.inductance, path);
             case "lernen" then ew_export_learning_csv(ew_app.learning, path);
             case "konvergenz" then ew_export_convergence_csv(ew_app.convergence, ew_app.settings.phase, ew_app.settings.sourcePhase, path);
+            case "animation" then ew_export_animation_csv(ew_app.animation,path);
             else ew_export_csv(w, path, ew_app.settings);
             end
         case "json" then ew_export_json(w, ew_app.spectrum, ew_app.inductance, path, ew_app.settings, ew_app.learning);
         case "svg" then ew_export_svg(ew_app.lastFigure, path);
-        case "report" then ew_export_report(w, ew_app.inductance, path, ew_app.learning);
+        case "report" then ew_export_report(w, ew_app.inductance, path, ew_app.learning,ew_app.animationFrame);
         else error("Unbekanntes Exportformat.");
         end
         ew_app.controls.status.string = "Export gespeichert: " + path;
@@ -866,3 +905,248 @@ function ew_gui_save_csv(), ew_gui_save("csv"); endfunction
 function ew_gui_save_json(), ew_gui_save("json"); endfunction
 function ew_gui_save_svg(), ew_gui_save("svg"); endfunction
 function ew_gui_save_report(), ew_gui_save("report"); endfunction
+
+// A one-shot native Swing timer queues one Scilab frame at a time. No drawing
+// loop blocks the Desktop interpreter: Pause, edits and window closing remain
+// ordinary short callbacks. Scilab Desktop includes Java/JIMS already.
+function epoch=ew_gui_animation_epoch()
+    global EW_ANIMATION_EPOCH;
+    if isempty(EW_ANIMATION_EPOCH) then EW_ANIMATION_EPOCH=0;end
+    EW_ANIMATION_EPOCH=EW_ANIMATION_EPOCH+1;epoch=EW_ANIMATION_EPOCH;
+endfunction
+
+function ew_gui_animation_pause()
+    global ew_app;
+    if typeof(ew_app)<>"st" then return;end
+    if ~isfield(ew_app,"animationPlaying") then return;end
+    ew_app.animationPlaying=%f;
+    ew_app.animationGeneration=ew_gui_animation_epoch();
+    if isfield(ew_app,"animationTimer") then
+        if ~isempty(ew_app.animationTimer) then
+            try ew_app.animationTimer.stop();catch ignored=%t;end
+        end
+    end
+    if isfield(ew_app,"animationControls") then
+        if isfield(ew_app.animationControls,"play") then
+            try ew_app.animationControls.play.string="Start";catch ignored=%t;end
+        end
+    end
+endfunction
+
+function delay=ew_gui_animation_delay()
+    global ew_app;
+    speeds=[1800,900,400];index=2;
+    try index=ew_app.animationControls.speed.value;catch ignored=%t;end
+    delay=speeds(min(3,max(1,index)));
+endfunction
+
+function ew_gui_animation_draw(bringToFront)
+    global ew_app;
+    if argn(2)<1 then bringToFront=%t;end
+    generation=ew_app.animationGeneration;
+    fig=[];
+    if isfield(ew_app.plotFigures,"animation") then
+        if ew_gui_figure_alive(ew_app.plotFigures.animation) then fig=ew_app.plotFigures.animation;end
+    end
+    if isempty(fig) then
+        screen=get(0,"screensize_px");
+        windowSize=[min(1120,screen(3)-60),min(850,screen(4)-70)];
+        windowPosition=[min(200,max(0,screen(3)-windowSize(1)-20)), ..
+            min(120,max(0,screen(4)-windowSize(2)-30))];
+        fig=figure("figure_name","Zeigeranimation: Formel - Zahlen - Ergebnis", ..
+            "axes_size",windowSize,"menubar","none","toolbar","none", ..
+            "infobar_visible","off","dockable","off","visible","off");
+        fig.figure_position=windowPosition;fig.background=color(255,255,255);
+        fig.tag="wicklungsatelier-animation";
+        fig.closerequestfcn="ew_gui_animation_close("+string(fig.figure_id)+");";
+        ew_app.plotFigures.animation=fig;
+        controls=struct();
+        controls.previous=ew_gui_button(fig,"Zurück","ew_gui_animation_step(-1);",[0.02,0.018,0.105,0.041]);
+        controls.play=ew_gui_button(fig,"Start","ew_gui_animation_toggle();",[0.139,0.018,0.105,0.041]);
+        controls.next=ew_gui_button(fig,"Weiter","ew_gui_animation_step(1);",[0.258,0.018,0.105,0.041]);
+        controls.restart=ew_gui_button(fig,"Anfang","ew_gui_animation_restart();",[0.377,0.018,0.105,0.041]);
+        ew_gui_label(fig,"Tempo",[0.503,0.029,0.06,0.024],9);
+        controls.speed=ew_gui_popup(fig,["Langsam";"Normal";"Schnell"],2,[0.563,0.018,0.12,0.041],"ew-animation-speed");
+        controls.speed.callback="ew_gui_animation_speed_changed();";
+        controls.progress=ew_gui_label(fig,"",[0.705,0.019,0.275,0.04],10);
+        ew_app.animationControls=controls;
+        fig.visible="on";
+    end
+    scf(fig);
+    // Keep buttons alive, including their focus, while replacing only the plot.
+    children=fig.children;
+    for n=1:size(children,"*")
+        if children(n).type=="Axes" then delete(children(n));end
+    end
+    ax=newaxes();ax.axes_bounds=[0,0,1,0.91];
+    ew_plot_animation(ew_app.animation,ew_app.animationFrame,ax);
+    // Native drawing may dispatch a close/Pause callback. Its newer state wins.
+    if generation<>ew_app.animationGeneration then return;end
+    if ~ew_gui_figure_alive(fig) then return;end
+    if ew_app.animation.valid then
+        ew_app.animationHighlight=%t;
+        ew_app.animationControls.progress.string=msprintf("Schritt %d / %d",ew_app.animationFrame,ew_app.animation.frameCount);
+        enabled="on";
+    else
+        ew_app.animationHighlight=%f;
+        ew_app.animationControls.progress.string="Keine gültige Lernfolge";enabled="off";
+    end
+    for name=["previous","play","next","restart"]
+        control=ew_app.animationControls(name);control.enable=enabled;
+    end
+    if ew_app.animationPlaying then ew_app.animationControls.play.string="Pause";else ew_app.animationControls.play.string="Start";end
+    fig.user_data=struct("ewView","animation","coilId",ew_app.settings.coilId, ..
+        "selectedOrder",ew_app.settings.selectedOrder,"animationFrame",ew_app.animationFrame, ..
+        "selection",ew_app.selection);
+    fig.event_handler="ew_gui_graphic_event";fig.event_handler_enable="on";
+    drawnow();
+    if bringToFront then ew_app.lastFigure=fig;show_window(fig);end
+endfunction
+
+function ew_gui_animation_sync_winding()
+    global ew_app;
+    if isfield(ew_app.plotFigures,"wicklung") then
+        if ew_gui_figure_alive(ew_app.plotFigures.wicklung) then ew_gui_draw("wicklung",%f);end
+    end
+endfunction
+
+// A direct control action selects its own result view and export target.
+// Automatic ticks only refresh data and never change the user's active view.
+function ew_gui_animation_activate()
+    global ew_app;
+    ew_app.view="animation";
+    if isfield(ew_app.plotFigures,"animation") then
+        if ew_gui_figure_alive(ew_app.plotFigures.animation) then
+            ew_app.lastFigure=ew_app.plotFigures.animation;
+        end
+    end
+    ew_gui_update_report();
+endfunction
+
+function success=ew_gui_animation_set_frame(index,stopFirst,generation)
+    global ew_app;
+    if argn(2)<2 then stopFirst=%t;end
+    success=%f;
+    if stopFirst then
+        ew_gui_animation_pause();ew_gui_animation_activate();
+    end
+    if argn(2)<3 then generation=ew_app.animationGeneration;end
+    if generation<>ew_app.animationGeneration then return;end
+    if ~ew_app.animation.valid then return;end
+    if size(index,"*")<>1 | ~isreal(index) then return;end
+    if isnan(index)|isinf(index) then return;end
+    index=max(1,min(ew_app.animation.frameCount,floor(index)));
+    ew_app.animationFrame=index;ew_app.settings.animationFrame=index;
+    ew_gui_animation_draw(%f);
+    if generation<>ew_app.animationGeneration then return;end
+    if stopFirst then ew_gui_animation_activate();end
+    ew_gui_animation_sync_winding();
+    if generation<>ew_app.animationGeneration then return;end
+    if ew_app.view=="animation" then ew_gui_update_report();end
+    success=%t;
+endfunction
+
+function ew_gui_animation_step(delta)
+    global ew_app;
+    ew_gui_animation_set_frame(ew_app.animationFrame+delta);
+endfunction
+
+function ew_gui_animation_restart()
+    ew_gui_animation_set_frame(1);
+endfunction
+
+function ew_gui_animation_toggle()
+    global ew_app;
+    ew_gui_animation_activate();
+    if ew_app.animationPlaying then ew_gui_animation_pause();return;end
+    // Apply pending edits before starting; failed inputs must not animate a
+    // previous valid machine. Unchanged inputs reuse the existing model cache.
+    if ~ew_gui_calculate(%f) then return;end
+    if ~ew_app.animation.valid then return;end
+    if ~isfield(ew_app.plotFigures,"animation") then ew_gui_animation();end
+    if ~ew_gui_figure_alive(ew_app.plotFigures.animation) then ew_gui_animation();end
+    if ew_app.animationFrame>=ew_app.animation.frameCount then ew_gui_animation_set_frame(1);end
+    ew_app.animationPlaying=%t;
+    ew_app.animationGeneration=ew_gui_animation_epoch();
+    ew_app.animationControls.play.string="Pause";
+    try
+        jimport org.scilab.modules.gui.events.callback.ScilabCallBack;
+        command=msprintf("ew_gui_animation_tick(%.0f);",ew_app.animationGeneration);
+        listener=ScilabCallBack.create(command);
+        ew_app.animationTimer=jnewInstance("javax.swing.Timer",int32(ew_gui_animation_delay()),listener);
+        ew_app.animationTimer.setRepeats(%f);
+        ew_app.animationTimer.start();
+    catch
+        ew_gui_animation_pause();
+        ew_app.controls.status.string="Automatische Wiedergabe nicht verfügbar: "+lasterror()+" Einzelschritte bleiben bedienbar.";
+    end
+endfunction
+
+function ew_gui_animation_tick(generation)
+    global ew_app;
+    if typeof(ew_app)<>"st" then return;end
+    if ~isfield(ew_app,"animationGeneration") then return;end
+    if generation<>ew_app.animationGeneration | ~ew_app.animationPlaying then return;end
+    if ~ew_gui_figure_alive(ew_app.figure) then ew_gui_animation_pause();return;end
+    if ~isfield(ew_app.plotFigures,"animation") then ew_gui_animation_pause();return;end
+    if ~ew_gui_figure_alive(ew_app.plotFigures.animation) then
+        ew_gui_animation_pause();ew_app.animationHighlight=%f;ew_gui_animation_sync_winding();return;
+    end
+    if ~ew_app.animation.valid then ew_gui_animation_pause();return;end
+    if ew_app.animationFrame>=ew_app.animation.frameCount then ew_gui_animation_pause();return;end
+    try
+        ew_gui_animation_set_frame(ew_app.animationFrame+1,%f,generation);
+        if generation<>ew_app.animationGeneration | ~ew_app.animationPlaying then return;end
+        if ew_app.animationFrame>=ew_app.animation.frameCount then
+            ew_gui_animation_pause();
+        elseif ~isempty(ew_app.animationTimer) then
+            ew_app.animationTimer.setInitialDelay(int32(ew_gui_animation_delay()));
+            ew_app.animationTimer.restart();
+        end
+    catch
+        message=lasterror();
+        // Closing, pausing or replacing the app can invalidate a handle while
+        // its previous frame is drawing. Never change the newer app state.
+        if typeof(ew_app)<>"st" then return;end
+        if ~isfield(ew_app,"animationGeneration") then return;end
+        if generation<>ew_app.animationGeneration then return;end
+        if ~ew_gui_figure_alive(ew_app.plotFigures.animation) then
+            ew_gui_animation_pause();ew_app.animationHighlight=%f;
+            ew_gui_animation_sync_winding();return;
+        end
+        ew_gui_animation_pause();
+        try ew_app.controls.status.string="Animation angehalten: "+message;catch ignored=%t;end
+    end
+endfunction
+
+function ew_gui_animation_speed_changed()
+    global ew_app;
+    ew_gui_animation_activate();
+    if ew_app.animationPlaying & ~isempty(ew_app.animationTimer) then
+        ew_app.animationTimer.setInitialDelay(int32(ew_gui_animation_delay()));
+        ew_app.animationTimer.restart();
+    end
+endfunction
+
+function ew_gui_animation_close(figureId)
+    global ew_app;
+    current=%f;
+    if typeof(ew_app)=="st" then
+        if isfield(ew_app,"plotFigures") then
+            if isfield(ew_app.plotFigures,"animation") then
+                if ew_gui_figure_alive(ew_app.plotFigures.animation) then
+                    current=ew_app.plotFigures.animation.figure_id==figureId;
+                end
+            end
+        end
+    end
+    if current then
+        ew_gui_animation_pause();ew_app.animationHighlight=%f;
+        delete(ew_app.plotFigures.animation);ew_app.animationControls=struct();
+        ew_gui_animation_sync_winding();
+    else
+        if ~isempty(find(winsid()==figureId)) then
+            try delete(scf(figureId));catch ignored=%t;end
+        end
+    end
+endfunction

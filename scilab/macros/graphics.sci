@@ -101,6 +101,22 @@ function chosen = ew_gfx_selected_coil(w, selection)
     end
 endfunction
 
+// A lesson may temporarily point to several actual coils. This drawing-only
+// emphasis leaves the central selected coil and the canonical layout intact.
+function ids = ew_gfx_active_coils(w, selection)
+    ids = emptystr(0,1);
+    if typeof(selection) <> "st" then return; end
+    if isfield(selection,"activeCoilIds") then
+        for k=1:length(w.coils)
+            id=w.coils(k).id;
+            if or(selection.activeCoilIds==id) then ids($+1,1)=id; end
+        end
+    else
+        chosen=ew_gfx_selected_coil(w,selection);
+        if typeof(chosen)=="st" then ids=chosen.id; end
+    end
+endfunction
+
 function order = ew_gfx_selected_order(selection)
     order = [];
     if typeof(selection) <> "st" then return; end
@@ -480,6 +496,7 @@ function ax = ew_plot_winding(w,mode,startSlot,phaseFilter,ax,selection)
     ax=ew_gfx_prepare("Wickelschema - Leiter in Nuten zwischen den Zähnen",ax);
     chosen=ew_gfx_selected_coil(w,selection); hasChoice=typeof(chosen)=="st"; chosenId="";
     if hasChoice then chosenId=chosen.id; end
+    activeIds=ew_gfx_active_coils(w,selection); hasHighlight=~isempty(activeIds);
     hits=list();
     layout=ew_build_winding_layout(w,mode,startSlot);
     if ~layout.valid then
@@ -502,9 +519,9 @@ function ax = ew_plot_winding(w,mode,startSlot,phaseFilter,ax,selection)
     // short-circuit polygon is used for an individual coil.
     for ii=1:length(layout.coilPaths)
         cc=layout.coilPaths(ii);
-        selected=cc.id==chosenId;
+        selected=or(activeIds==cc.id);
         if phaseFilter<>"" & cc.phase<>phaseFilter & ~selected then continue; end
-        col=ew_gfx_link_color(cc.phase,hasChoice & ~selected); lineWidth=1.4;
+        col=ew_gfx_link_color(cc.phase,hasHighlight & ~selected); lineWidth=1.4;
         if selected then lineWidth=3.5; end
         ew_gfx_paths(cc.topPaths,col,lineWidth,%t);
         ew_gfx_paths(cc.bottomPaths,col,lineWidth,%t);
@@ -531,12 +548,12 @@ function ax = ew_plot_winding(w,mode,startSlot,phaseFilter,ax,selection)
     for ii=1:length(layout.connections)
         link=layout.connections(ii);
         if phaseFilter<>"" & link.phase<>phaseFilter then continue; end
-        ew_gfx_paths(link.paths,ew_gfx_link_color(link.phase,hasChoice),1.3,%t);
+        ew_gfx_paths(link.paths,ew_gfx_link_color(link.phase,hasHighlight),1.3,%t);
     end
     for ii=1:length(layout.terminals)
         term=layout.terminals(ii);
         if phaseFilter<>"" & term.phase<>phaseFilter then continue; end
-        col=ew_gfx_link_color(term.phase,hasChoice & term.coilId<>chosenId); ew_gfx_paths(term.paths,col,1.6,%f);
+        col=ew_gfx_link_color(term.phase,hasHighlight & ~or(activeIds==term.coilId)); ew_gfx_paths(term.paths,col,1.6,%f);
         ew_gfx_text(term.x-layout.slotPitch*0.1,term.y+12,term.label,col,1.6);
     end
     for ii=1:length(layout.zoneBoundaries)
@@ -550,8 +567,15 @@ function ax = ew_plot_winding(w,mode,startSlot,phaseFilter,ax,selection)
     ew_gfx_text(60,layout.geometry.annotationY,"Schnittnut "+string(layout.startSlot)+" | "+mode+" | L1 rechts, L2 links | Blau: Zähne; Weiß: Nuten",dark,1.5);
     legend="Plus-Seite: Pfeil aufwärts; Minus-Seite: abwärts. Stränge: A / B / C";
     if hasChoice then legend=chosen.id+": +Nut "+string(chosen.positiveSlot)+"/L"+string(chosen.positiveLayer)+"; -Nut "+string(chosen.negativeSlot)+"/L"+string(chosen.negativeLayer)+". Auswahl in allen Ansichten gekoppelt."; end
+    if typeof(selection)=="st" then
+        if isfield(selection,"activeCoilIds") then
+            legend="Animationsschritt: "+strcat(activeIds,", ")+" hervorgehoben. Gewählte Ausgangsspule: "+chosenId+". Verschaltung unverändert.";
+        end
+    end
     ew_gfx_text(60,layout.geometry.legendY,legend,dark,1.5);
     ew_gfx_set_hits(ax,hits,"winding");
+    metadata=ax.user_data;metadata.activeCoilIds=activeIds;metadata.selectedCoilId=chosenId;
+    ax.user_data=metadata;
 endfunction
 // Native Scilab plots. The coefficients and geometry come from the numerical
 // models; no plot changes conductor signs or independently rotates phases.

@@ -49,7 +49,7 @@ async function collect(directory, prefix = "") {
   }
 }
 await collect(root);
-entries["LESEN.txt"] = strToU8("Wicklungsatelier fuer Scilab · Version 1.1\n\nScilab Desktop 2024.1 oder neuer empfohlen.\nZIP vollstaendig entpacken und Scilab starten.\nDatei > Ausfuehren: wicklungsatelier-scilab/start.sce auswaehlen.\nNeu: verknuepfte Spulenauswahl, Lernansicht fuer einzelne Raumharmonische und Konvergenz der Induktivitaet.\nKeine ATOMS-Toolbox, kein Node.js und keine Internetverbindung erforderlich.\nAnleitung und mathematisches Modell: wicklungsatelier-scilab/README.md.\nDie voreingestellten Maschinenabmessungen sind Beispielwerte.\n");
+entries["LESEN.txt"] = strToU8("Wicklungsatelier fuer Scilab · Version 1.2\n\nScilab Desktop 2024.1 oder neuer empfohlen.\nZIP vollstaendig entpacken und Scilab starten.\nDatei > Ausfuehren: wicklungsatelier-scilab/start.sce auswaehlen.\nNeu: animierte Zeigeraddition mit Pause und Einzelschritten, gesetzte Formeln mit eingesetzten Werten und Ergebnis sowie ein vollstaendiges Rechenprotokoll.\nKeine ATOMS-Toolbox, kein Node.js und keine Internetverbindung erforderlich.\nAnleitung und mathematisches Modell: wicklungsatelier-scilab/README.md.\nDie voreingestellten Maschinenabmessungen sind Beispielwerte.\n");
 const zip = zipSync(entries, { level: 9, mtime: new Date("2020-01-01T00:00:00Z") });
 const destination = new URL("../downloads/wicklungsatelier-scilab.zip", import.meta.url);
 await writeFile(destination, zip);

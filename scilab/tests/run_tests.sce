@@ -51,12 +51,14 @@ try
     exec(testDirectory + "../macros/spectrum.sci", -1);
     exec(testDirectory + "../macros/inductance.sci", -1);
     exec(testDirectory + "../macros/learning.sci", -1);
+    exec(testDirectory + "../macros/animation.sci", -1);
     exec(testDirectory + "../macros/graphics.sci", -1);
     exec(testDirectory + "reference-fixtures.sce", -1);
     exec(testDirectory + "layout_reference_fixtures.sci", -1);
     exec(testDirectory + "layout_tests.sci", -1);
     exec(testDirectory + "inductance_tests.sci", -1);
     exec(testDirectory + "learning_tests.sci", -1);
+    exec(testDirectory + "animation_tests.sci", -1);
     global EW_TEST_ASSERTIONS;
     EW_TEST_ASSERTIONS = 0;
     phaseNames = ["A" "B" "C"];
@@ -189,6 +191,8 @@ try
     EW_TEST_ASSERTIONS = EW_TEST_ASSERTIONS + independentInductanceChecks;
     learningChecks = ew_test_learning();
     EW_TEST_ASSERTIONS = EW_TEST_ASSERTIONS + learningChecks;
+    animationChecks = ew_test_animation();
+    EW_TEST_ASSERTIONS = EW_TEST_ASSERTIONS + animationChecks;
     global EW_SCILAB_ROOT;
     EW_SCILAB_ROOT = testDirectory + "../";
     exec(testDirectory + "../macros/export.sci", -1);

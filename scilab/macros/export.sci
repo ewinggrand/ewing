@@ -137,7 +137,7 @@ endfunction
 
 function ew_export_csv(w, path, settings)
     if argn(2) < 3 then settings = struct("startSlot", 0, "connectionMode", "series"); end
-    rows = ["Wicklungsatelier Scilab;Version;1.1"; ..
+    rows = ["Wicklungsatelier Scilab;Version;1.2"; ..
         "Q;p;Schichten;y;q;kw1"; ..
         strcat([string(w.slots),string(w.polePairs),string(w.layers),ew_number(w.coilSpan),ew_number(w.q),ew_number(w.metrics.kw)], ";"); ..
         ""; "Nut;Lage;Strang;Vorzeichen;Elektrischer Winkel Grad"];
@@ -205,10 +205,19 @@ endfunction
 function ew_export_json(w, s, d, path, settings, learning)
     if argn(2) < 5 then settings = struct("startSlot", 0, "connectionMode", "series"); end
     if argn(2) < 6 then learning = ew_export_learning_context(w,d,settings); end
-    payload = struct("edition", "Scilab", "version", "1.1", "winding", w, "spectrum", s, "inductance", d);
+    payload = struct("edition", "Scilab", "version", "1.2", "winding", w, "spectrum", s, "inductance", d);
     payload.settings = settings;
     payload.learning = learning;
-    if learning.valid then payload.convergence = learning.convergence; end
+    if learning.valid then
+        payload.convergence = learning.convergence;
+        payload.animation = ew_compute_animation(learning);
+        frameIndex = 1;
+        if isfield(settings,"animationFrame") then frameIndex = settings.animationFrame; end
+        if payload.animation.valid then
+            ew_i_require(frameIndex,"Animationsschritt",1,payload.animation.frameCount,%t,%t);
+            payload.animation.currentFrame = frameIndex;
+        end
+    end
     if w.valid then payload.windingLayout = ew_build_winding_layout(w, settings.connectionMode, settings.startSlot); end
     mputl(toJSON(payload), path);
 endfunction
@@ -229,11 +238,14 @@ function html = ew_html_matrix(matrix, label)
     html = html + "</table></div>";
 endfunction
 
-function ew_export_report(w, d, path, learning)
+function ew_export_report(w, d, path, learning, animationFrame)
     if ~w.valid | ~d.valid then error("Für den Bericht ist eine vollständige gültige Wicklung nötig."); end
     if argn(2) < 4 then learning = ew_export_learning_context(w,d,struct()); end
+    if argn(2) < 5 then animationFrame = 1; end
+    animation = ew_compute_animation(learning);
+    if animation.valid then ew_i_require(animationFrame,"Animationsschritt",1,animation.frameCount,%t,%t); end
     html = ["<!doctype html><html lang=""de""><head><meta charset=""utf-8""><meta name=""viewport"" content=""width=device-width,initial-scale=1""><title>Wicklungsatelier – mathematische Herleitung</title>"; ..
-        "<style>body{font:16px/1.8 system-ui,sans-serif;color:#344132;background:#f5f6ed;margin:0}main{max-width:1080px;margin:32px auto;padding:0 20px}section{background:#fffefa;border:1px solid #dce1d1;border-radius:8px;padding:24px;margin:22px 0}h1,h2,h3{line-height:1.4}h1{font-size:28px}h2{font-size:22px}h3{font-size:17px}table{border-collapse:collapse;width:100%;font-size:14px}th,td{padding:9px;border:1px solid #e1e6d7;text-align:right}th:first-child,td:first-child{text-align:left}.formula{overflow-x:auto;padding:15px;background:#f3f5eb;border-radius:6px;margin:16px 0;font-size:18px}.values{background:#faf3e8;padding:16px;overflow-wrap:anywhere}.scroll{overflow:auto}pre{white-space:pre-wrap}nav a{margin-right:16px;color:#a95736}small{color:#748268}@media print{body{background:white}section{break-inside:avoid}nav{display:none}main{margin:0;max-width:none}}</style></head><body><main>"; ..
+        "<style>body{font:16px/1.8 system-ui,sans-serif;color:#344132;background:#f5f6ed;margin:0}main{max-width:1080px;margin:32px auto;padding:0 20px}section{background:#fffefa;border:1px solid #dce1d1;border-radius:8px;padding:24px;margin:22px 0}h1,h2,h3{line-height:1.4}h1{font-size:28px}h2{font-size:22px}h3{font-size:17px}table{border-collapse:collapse;width:100%;font-size:14px}th,td{padding:9px;border:1px solid #e1e6d7;text-align:right}th:first-child,td:first-child{text-align:left}.formula{overflow-x:auto;padding:15px;background:#f3f5eb;border-radius:6px;margin:16px 0;font-size:18px}.values{background:#faf3e8;padding:16px;overflow-wrap:anywhere}.scroll{overflow:auto}pre{white-space:pre-wrap}nav a{margin-right:16px;color:#a95736}small{color:#748268}@media print{details::details-content{display:block;content-visibility:visible}details{break-inside:avoid}body{background:white}section{break-inside:avoid}nav{display:none}main{margin:0;max-width:none}}</style></head><body><main>"; ..
         "<h1>Wicklungsatelier für Scilab: mathematische Herleitung</h1>"; ..
         "<p>Q="+string(w.slots)+", p="+string(w.polePairs)+", Schichten="+string(w.layers)+", y="+string(w.coilSpan)+", q="+ew_number(w.q)+". Berechnet aus den tatsächlichen vorzeichenbehafteten Nutlagen und Serienverbindungen.</p>"; ..
         "<p><strong>Modell:</strong> linearer Magnetkreis, ideal magnetisch leitendes Eisen, gleichmäßiger dünner Luftspalt. Luftspalt-/Hauptinduktivität ohne Nut- und Wickelkopfstreuung, Sättigung, endliche Eisenpermeabilität und Rotorsalienz.</p>"; ..
@@ -276,9 +288,10 @@ function ew_export_report(w, d, path, learning)
             html($+1) = ew_html_matrix(d.harmonicMatrixH, "Fourier-Summe bis K="+string(d.parameters.maxOrder));
         end
         if learning.valid then html = [html; ew_learning_html_stage(w,d,learning,stage)]; end
+        if stage == 2 & animation.valid then html = [html; ew_animation_html(animation,animationFrame)]; end
         html($+1) = "</section>";
     end
-    html = [html; "<p><small>Scilab-Edition 1.1 · Formeln als natives MathML · vollständig offline lesbar. Zum PDF-Ausdruck die Druckfunktion des Browsers verwenden.</small></p></main></body></html>"];
+    html = [html; "<p><small>Scilab-Edition 1.2 · Formeln als natives MathML · vollständig offline lesbar. Zum PDF-Ausdruck die Druckfunktion des Browsers verwenden.</small></p></main></body></html>"];
     mputl(html, path);
 endfunction
 
@@ -372,7 +385,7 @@ endfunction
 
 function ew_export_learning_csv(learning,path)
     if ~learning.valid then error("Keine gültige Lernansicht vorhanden."); end
-    rows = ["Wicklungsatelier Scilab;Version;1.1"; ..
+    rows = ["Wicklungsatelier Scilab;Version;1.2"; ..
         "Spule;Empfangsstrang;Quellenstrang;Raumordnung k"; ..
         strcat([learning.coilId,learning.phase,learning.sourcePhase,string(learning.order)],";"); ..
         ""; "Summe;Spulenzahl;U Real;U Imaginaer;C Raw Real;C Raw Imaginaer"];
@@ -399,6 +412,63 @@ function ew_export_convergence_csv(conv,phase,sourcePhase,path)
     for k = 1:size(conv.orders,"*")
         matrix = conv.partialMatricesH(k); contribution = conv.contributions(k);
         rows($+1) = strcat([string(k),ew_learning_csv_number(matrix(a,b)),ew_learning_csv_number(conv.exactMatrixH(a,b)),ew_learning_csv_number(conv.relativeError(k)),ew_learning_csv_number(contribution(a,b))],";");
+    end
+    mputl(rows,path);
+endfunction
+
+// The same deterministic lesson frames supply graphics and offline exports.
+function lines = ew_animation_report(animation, index)
+    if ~animation.valid then lines=["Zeigeranimation nicht verfügbar.";animation.warnings(:)];return;end
+    if argn(2)<2 then index=1;end
+    ew_i_require(index,"Animationsschritt",1,animation.frameCount,%t,%t);
+    frame=animation.frames(index);
+    lines=["ZEIGERADDITION: SCHRITT "+string(index)+" / "+string(animation.frameCount); ..
+        frame.title;frame.explanation;""; ..
+        "Normierte Spannungszeiger U: dimensionslos, keine Spannung in Volt. Zahlenanzeige gerundet."; ..
+        "Mechanische Raumordnung k="+string(animation.order)+", Strang "+animation.phase+", Ausgangsspule "+animation.coilId;""; ..
+        "1. ALLGEMEINE FORMEL";frame.formulaText;""; ..
+        "2. WERTE EINSETZEN";frame.substitutionText;""; ..
+        "3. ERGEBNIS";frame.resultText;""; ..
+        "Jetzt hervorgehoben: "+strcat(frame.activeCoilIds,", "); ..
+        "Bereits enthalten: "+strcat(frame.includedCoilIds,", ");""; ..
+        "Die Zeigeraddition ist eine mathematische Konstruktionsfolge. Die Wiedergabezeit ist keine elektrische Zeitachse."];
+endfunction
+
+function rows = ew_animation_html(animation,index)
+    frame=animation.frames(index);
+    rows=["<div id=""zeigeranimation"" data-animation-frame="""+string(index)+"""><h3>Zeigeraddition: Formel → Werte → Ergebnis</h3>"; ..
+        "<p>Spule "+ew_html_escape(animation.coilId)+", Strang "+animation.phase+", mechanische Raumordnung k="+string(animation.order)+". Normierte Spannungszeiger sind dimensionslos; es wird keine Spannung in Volt berechnet. Die Wiedergabe stellt eine mathematische Konstruktionsfolge dar. Angezeigte Zahlen sind gerundet; die Summen werden mit voller Rechengenauigkeit gebildet.</p>"; ..
+        "<div class=""values"">Aktueller Schritt "+string(index)+" / "+string(animation.frameCount)+": "+ew_html_escape(frame.title)+". Die folgenden aufklappbaren Schritte enthalten die vollständige Rechnung.</div>"];
+    for n=1:animation.frameCount
+        f=animation.frames(n);open="";if n==index then open=" open";end
+        rows($+1)="<details id="+ascii(34)+"animation-"+string(n)+ascii(34)+open+"><summary>"+string(n)+". "+ew_html_escape(f.title)+"</summary><p>"+ew_html_escape(f.explanation)+"</p>";
+        rows($+1)="<p><strong>Allgemeine Formel</strong></p><div class=""formula"">"+f.formulaMathML+"</div>";
+        rows($+1)="<p><strong>Werte einsetzen</strong></p><div class=""formula"">"+f.substitutionMathML+"</div>";
+        rows($+1)="<p><strong>Ergebnis</strong></p><div class=""formula"">"+f.resultMathML+"</div>";
+        rows($+1)="<p>Aktueller Beitrag: "+ew_html_escape(strcat(f.activeCoilIds,", "))+". Bisher enthalten: "+ew_html_escape(strcat(f.includedCoilIds,", "))+".</p></details>";
+    end
+    rows=[rows;"<h4>Übergang zum Fourier-Koeffizienten</h4>"; ..
+        "<p>Die Spannungszeiger mit +j im Exponenten werden konjugiert und durch 2jk geteilt. Dieser Koeffizient dient anschließend zur Induktivitätsberechnung.</p>"; ..
+        "<div class=""formula"">"+animation.conversionFormulaMathML+"</div>"; ..
+        "<div class=""formula"">"+animation.conversionSubstitutionMathML+"</div>"; ..
+        "<div class=""formula"">"+animation.conversionResultMathML+"</div>";"</div>"];
+endfunction
+
+function cell = ew_animation_csv_cell(value)
+    cell=ascii(34)+strsubst(value,ascii(34),ascii(34)+ascii(34))+ascii(34);
+endfunction
+
+function ew_export_animation_csv(animation,path)
+    if ~animation.valid then error("Keine gültige Zeigeranimation vorhanden.");end
+    rows=["Wicklungsatelier Scilab;Version;1.2;Normierte Spannungszeiger U;dimensionslos"; ..
+        "Schritt;Etappe;Titel;Aktuelle Spulen;Enthaltene Spulen;Allgemeine Formel;Werte einsetzen;Ergebnis;U Real;U Imaginaer;Resultante sichtbar"];
+    for n=1:animation.frameCount
+        f=animation.frames(n);
+        fields=[string(n),f.stage,f.title,strcat(f.activeCoilIds,", "),strcat(f.includedCoilIds,", "), ..
+            f.formulaText,f.substitutionText,f.resultText,ew_learning_csv_number(f.result.real), ..
+            ew_learning_csv_number(f.result.imag),string(f.showResult)];
+        for k=1:size(fields,"*"),fields(k)=ew_animation_csv_cell(fields(k));end
+        rows($+1)=strcat(fields,";");
     end
     mputl(rows,path);
 endfunction
